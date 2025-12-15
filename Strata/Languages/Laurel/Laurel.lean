@@ -45,21 +45,29 @@ abbrev Identifier := String /- Potentially this could be an Int to save resource
 mutual
 structure Procedure: Type where
   name : Identifier
+  type : ProcedureType
+  body : StmtExpr
+
+structure ProcedureType: Type where
+  name : String
   inputs : List Parameter
-  output : HighType
+  outputs : List Parameter
   precondition : StmtExpr
-  decreases : StmtExpr
-  deterministic: Bool
-  /- Reads clause defaults to empty for deterministic procedures, and everything for non-det ones -/
-  reads : Option StmtExpr
-  modifies : StmtExpr
-  body : Body
+  decreases : Option StmtExpr -- optionally prove termination
+  determinism: Determinism
+  modifies : Option StmtExpr
+  postcondition : Option StmtExpr
+
+inductive Determinism where
+  | deterministic (reads: Option StmtExpr)
+  | nondeterministic
 
 structure Parameter where
   name : Identifier
   type : HighType
 
 inductive HighType : Type where
+  | Procedure (type: ProcedureType)
   | TVoid
   | TBool
   | TInt
@@ -72,15 +80,6 @@ inductive HighType : Type where
      Example: `<cond> ? RustanLeino : AndersHejlsberg` could be typed as `Scientist & Scandinavian`-/
   | Intersection (types : List HighType)
   deriving Repr
-
-/- No support for something like function-by-method yet -/
-inductive Body where
-  | Transparent (body : StmtExpr)
-/- Without an implementation, the postcondition is assumed -/
-  | Opaque (postcondition : StmtExpr) (implementation : Option StmtExpr)
-/- An abstract body is useful for types that are extending.
-    A type containing any members with abstract bodies can not be instantiated. -/
-  | Abstract (postcondition : StmtExpr)
 
 /- We will support these operations for dynamic types as well -/
 /- The 'truthy' concept from JavaScript should be implemented using a library function -/
@@ -231,7 +230,8 @@ Example 2:
  -/
 inductive TypeDefinition where
   | Composite (ty : CompositeType)
-  | Constrainted {ConstrainedType} (ty : ConstrainedType)
+  | Constrainted (ty : ConstrainedType)
+  | Procedure (ty: ProcedureType)
 
 structure Program where
   staticProcedures : List Procedure
