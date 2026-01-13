@@ -3,9 +3,12 @@
 
   SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
+module
+public import Strata.DDM.AST
+public import Strata.DDM.HNF
+import Strata.DDM.Util.Array
 
-import Strata.DDM.AST
-
+public section
 namespace Strata
 
 class HasEta (α : Type u) (β : outParam (Type v)) where
@@ -20,16 +23,16 @@ def etaExpand {E T} [HasEta E T] (argTypes : Array (String × T)) (provided : Na
   else
     e
 
-def OfAstM (α : Type _) := Except String α
+@[expose] def OfAstM (α : Type _) := Except String α
 
-instance [ToString α] : ToString (OfAstM α) where
-  toString e :=
+instance {α} [ToString α] : ToString (OfAstM α) where
+  toString e := private
     match e with
     | .error e => e
     | .ok r => toString r
 
-instance [Repr α] : Repr (OfAstM α) where
-  reprPrec e prec :=
+instance {α} [Repr α] : Repr (OfAstM α) where
+  reprPrec e prec := private
     match e with
     | .error e => Repr.addAppParen ("error " ++ reprArg e) prec
     | .ok r => Repr.addAppParen ("ok " ++ reprArg r) prec
@@ -142,10 +145,13 @@ def ofDecimalM {α} [Repr α] : ArgF α → OfAstM (Ann Decimal α)
 | .decimal ann val => pure { ann := ann, val := val }
 | a => .throwExpected "scientific literal" a
 
-def ofStrlitM {α} [Repr α]
-      : ArgF α → OfAstM (Ann String α)
+def ofStrlitM {α} [Repr α] : ArgF α → OfAstM (Ann String α)
 | .strlit ann val => pure { ann := ann, val := val }
 | a => .throwExpected "string literal" a
+
+def ofBytesM {α} [Repr α] : ArgF α → OfAstM (Ann ByteArray α)
+| .bytes ann val => pure { ann := ann, val := val }
+| a => .throwExpected "byte array" a
 
 def ofOptionM {α β} [Repr α] [SizeOf α]
       (arg : ArgF α)
@@ -222,3 +228,4 @@ def exprEtaArg{Ann α T} [Repr Ann] [HasEta α T] {e : Expr} {n : Nat} (as : Siz
     return HasEta.bvar i
 
 end Strata.OfAstM
+end

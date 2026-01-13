@@ -78,12 +78,20 @@ jobs:
         run: dotnet test ${SOLUTION}
       - name: Test Strata Command line
         run: .github/scripts/testStrataCommand.sh        
-      - name: Verify examples
+      - name: Validate examples against expected output
+        working-directory: Examples
         shell: bash
-        run: |
-              find "Examples" -maxdepth 1 -type f -name "*.st" | while IFS= read -r file; do
-                  source ~/.profile && lake exe StrataVerify "$file"
-              done
+        run: ./run_examples.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Build using pip
+        run: pip install .
+        working-directory: Tools/Python
+      - name: Run pyAnalyze tests
+        working-directory: StrataTest/Languages/Python
+        shell: bash
+        run: ./run_py_analyze.sh
 
   lint_checks:
     name: Run lint checks
@@ -104,25 +112,27 @@ jobs:
         run: .github/scripts/lintWhitespace.sh
       - name: Check for import Lean
         run: .github/scripts/checkLeanImport.sh
+      - name: Check Lean version consistncy
+        run: .github/scripts/check_lean_consistency.sh
 
   build_doc:
-    name: Build Documentation
+    name: Build documentation
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Build documetation package
+      - name: Build documentation package
         uses: leanprover/lean-action@v1
         with:
           build-args: '--wfail'
-          lake-package-directory: 'docs/ddm'
-      - name: Build Documentation
-        run: lake exe docs 
-        working-directory: docs/ddm
+          lake-package-directory: 'docs/verso'
+      - name: Build documentation
+        run: ./generate.sh
+        working-directory: docs/verso
 
   build_python:
-    name: Build and test Python package
+    name: Build and test Python
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -130,7 +140,7 @@ jobs:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
       with:
-        python-version: '3.13'
+        python-version: '3.14'
     - name: Build using pip
       run: pip install .
       working-directory: Tools/Python
@@ -143,3 +153,9 @@ jobs:
     - name: Run test script
       run: ./scripts/run_cpython_tests.sh
       working-directory: Tools/Python
+
+  cbmc:
+    needs: build_and_test_lean
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cbmc.yml

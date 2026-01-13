@@ -30,9 +30,7 @@ init (y : int) := (xinit : int)
          return format ans.fst
 
 
-/--
-info: error: Type Checking [init (x : bool) := #true]: Variable x of type bool already in context.
--/
+/-- info: error: Variable x of type bool already in context. -/
 #guard_msgs in
 #eval do let ans ← typeCheck LContext.default (TEnv.default.updateContext { types := [[("x", t[bool])]] })
                    Program.init
@@ -60,22 +58,22 @@ subst:
                     [
                     .init "x" t[int] eb[#0],
                     .init "y" t[int] eb[#6],
-                    .block "label_0" { ss :=
+                    .block "label_0"
 
                       [Statement.init "z" t[bool] eb[zinit],
                        Statement.assume "z_false" eb[z == #false],
 
                       .ite eb[z == #false]
-                        { ss := [Statement.set "x" eb[y]] }
-                        { ss := [Statement.assert "trivial" eb[#true]]},
+                        [Statement.set "x" eb[y]]
+                        [Statement.assert "trivial" eb[#true]],
 
                       Statement.assert "x_eq_y_label_0" eb[x == y],
-                      ]},
+                      ],
                     .assert "x_eq_y" eb[x == y]
                     ]
           return format ans.snd
 
-/-- info: error: Cannot unify differently named type constructors bool and int! -/
+/-- info: error: Impossible to unify bool with int. -/
 #guard_msgs in
 #eval do let ans ← typeCheck LContext.default TEnv.default Program.init none
                     [
@@ -85,18 +83,13 @@ subst:
                     ]
           return format ans
 
-/--
-info: error: Type Checking [init (x : int) := #1]: Variable x of type bool already in context.
--/
+/-- info: error: Variable x of type bool already in context. -/
 #guard_msgs in
 #eval do let ans ← typeCheck LContext.default TEnv.default Program.init none
                     [
                     .init "x" t[bool] eb[#true],
-                    .block "label_0" {
-                      ss := [
-                        Statement.init "x" t[int] eb[#1]
-                      ]
-                    }
+                    .block "label_0"
+                      [ Statement.init "x" t[int] eb[#1] ]
                     ]
           return format ans
 
@@ -116,21 +109,17 @@ subst: [($__ty0, int)]
                     [
                     .init "x" t[int] eb[#0],
                     .ite eb[x == #3]
-                    { ss := [
+                    [
                       Statement.init "y" t[∀α. %α] eb[x],
                       Statement.assert "local_y_eq_3" eb[y == #3]
-                    ]}
-                    {
-                      ss := [
-                        Statement.init "z" t[bool] eb[#true]
-                      ]
-                    }
+                    ]
+                    [ Statement.init "z" t[bool] eb[#true] ]
                     ]
           return format ans.snd
 
 /--
-info: ok: init (x : int) := (#1 : int)
-x := (#2 : int)
+info: ok: init (x : int) := #1
+x := #2
 -/
 #guard_msgs in
 #eval do let ans ← typeCheck LContext.default TEnv.default Program.init none

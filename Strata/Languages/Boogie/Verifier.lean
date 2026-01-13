@@ -8,6 +8,7 @@ import Strata.Languages.Boogie.DDMTransform.Translate
 import Strata.Languages.Boogie.Options
 import Strata.Languages.Boogie.CallGraph
 import Strata.Languages.Boogie.SMTEncoder
+import Strata.DL.Imperative.MetaData
 import Strata.DL.Imperative.SMTUtils
 import Strata.DL.SMT.CexParser
 
@@ -24,6 +25,7 @@ def encodeBoogie (ctx : Boogie.SMT.Context) (prelude : SolverM Unit) (ts : List 
   Solver.setLogic "ALL"
   prelude
   let _ ← ctx.sorts.mapM (fun s => Solver.declareSort s.name s.arity)
+  ctx.emitDatatypes
   let (_ufs, estate) ← ctx.ufs.mapM (fun uf => encodeUF uf) |>.run EncoderState.init
   let (_ifs, estate) ← ctx.ifs.mapM (fun fn => encodeFunction fn.uf fn.body) |>.run estate
   let (_axms, estate) ← ctx.axms.mapM (fun ax => encodeTerm False ax) |>.run estate
@@ -45,7 +47,7 @@ open Lambda Strata.SMT
 
 -- (TODO) Use DL.Imperative.SMTUtils.
 
-abbrev CounterEx := Map (IdentT Visibility) String
+abbrev CounterEx := Map (IdentT LMonoTy Visibility) String
 
 def CounterEx.format (cex : CounterEx) : Format :=
   match cex with
@@ -60,20 +62,22 @@ instance : ToFormat CounterEx where
 /--
 Find the Id for the SMT encoding of `x`.
 -/
-def getSMTId (x : (IdentT Visibility)) (ctx : SMT.Context) (E : EncoderState) : Except Format String := do
-    match x with
-    | (var, none) => .error f!"Expected variable {var} to be annotated with a type!"
-    | (var, some ty) => do
-      let (ty', _) ← LMonoTy.toSMTType ty ctx
-      let key : Strata.SMT.UF := { id := var.name, args := [], out := ty' }
-      .ok (E.ufs[key]!)
+def getSMTId (x : (IdentT LMonoTy Visibility)) (ctx : SMT.Context) (E : EncoderState)
+    : Except Format String := do
+  match x with
+  | (var, none) => .error f!"Expected variable {var} to be annotated with a type!"
+  | (var, some ty) => do
+    -- NOTE: OK to use Env.init here because ctx should already contain datatypes
+    let (ty', _) ← LMonoTy.toSMTType Env.init ty ctx
+    let key : Strata.SMT.UF := { id := var.name, args := [], out := ty' }
+    .ok (E.ufs[key]!)
 
 def getModel (m : String) : Except Format (List Strata.SMT.CExParser.KeyValue) := do
   let cex ← Strata.SMT.CExParser.parseCEx m
   return cex.pairs
 
 def processModel
-  (vars : List (IdentT Visibility)) (cexs : List Strata.SMT.CExParser.KeyValue)
+  (vars : List (IdentT LMonoTy Visibility)) (cexs : List Strata.SMT.CExParser.KeyValue)
   (ctx : SMT.Context) (E : EncoderState) :
   Except Format CounterEx := do
   match vars with
@@ -97,16 +101,19 @@ inductive Result where
   | err (msg : String)
 deriving DecidableEq, Repr
 
+def Result.formatWithVerbose (r : Result) (verbose : Bool) : Format :=
+  match r with
+  | .sat cex  => if verbose then f!"failed\nCEx: {cex}" else "failed"
+  | .unsat => f!"verified"
+  | .unknown => f!"unknown"
+  | .err msg => f!"err {msg}"
+
 instance : ToFormat Result where
-  format r := match r with
-    | .sat cex  => f!"failed\nCEx: {cex}"
-    | .unsat => f!"verified"
-    | .unknown => f!"unknown"
-    | .err msg => f!"err {msg}"
+  format r := r.formatWithVerbose true
 
 def VC_folder_name: String := "vcs"
 
-def runSolver (solver : String) (args : Array String) : IO String := do
+def runSolver (solver : String) (args : Array String) : IO IO.Process.Output := do
   let output ← IO.Process.output {
     cmd := solver
     args := args
@@ -114,30 +121,53 @@ def runSolver (solver : String) (args : Array String) : IO String := do
   -- dbg_trace f!"runSolver: exitcode: {repr output.exitCode}\n\
   --                         stderr: {repr output.stderr}\n\
   --                         stdout: {repr output.stdout}"
-  return output.stdout
+  return output
 
-def solverResult (vars : List (IdentT Visibility)) (ans : String) (ctx : SMT.Context) (E : EncoderState) :
+def solverResult (vars : List (IdentT LMonoTy Visibility)) (output: IO.Process.Output)
+    (ctx : SMT.Context) (E : EncoderState) :
   Except Format Result := do
-  let pos := (ans.find (fun c => c == '\n')).byteIdx
-  let verdict := (ans.take pos).trim
-  let rest := ans.drop pos
+  let stdout := output.stdout
+  let pos := (stdout.find (fun c => c == '\n')).byteIdx
+  let verdict := (stdout.take pos).trim
+  let rest := stdout.drop pos
   match verdict with
   | "sat"     =>
     let rawModel ← getModel rest
-    let model ← processModel vars rawModel ctx E
-    .ok (.sat model)
+    -- We suppress any counterexample processing errors.
+    -- Likely, these would be because of the suboptimal implementation
+    -- of the counterexample parser, which shouldn't hold back useful
+    -- feedback (i.e., problem was `sat`) from the user.
+    match (processModel vars rawModel ctx E) with
+    | .ok model => .ok (.sat model)
+    | .error _model_err => (.ok (.sat []))
   | "unsat"   =>  .ok .unsat
   | "unknown" =>  .ok .unknown
-  | other     =>  .error other
+  | _     =>  .error (stdout ++ output.stderr)
+
+open Imperative
+
+def formatPositionMetaData [BEq P.Ident] [ToFormat P.Expr] (md : MetaData P): Option Format := do
+  let fileRangeElem ← md.findElem MetaData.fileRange
+  match fileRangeElem.value with
+  | .fileRange m =>
+    let baseName := match m.file with
+                    | .file path => (path.splitToList (· == '/')).getLast!
+    return f!"{baseName}({m.start.line}, {m.start.column})"
+  | _ => none
 
 structure VCResult where
   obligation : Imperative.ProofObligation Expression
   result : Result := .unknown
   estate : EncoderState := EncoderState.init
+  verbose : Bool := true
+
+def VCResult.formatWithVerbose (r : VCResult) (verbose : Bool) : Format :=
+  f!"Obligation: {r.obligation.label}\n\
+     Result: {r.result.formatWithVerbose verbose}"
 
 instance : ToFormat VCResult where
   format r := f!"Obligation: {r.obligation.label}\n\
-                 Result: {r.result}"
+                 Result: {r.result.formatWithVerbose r.verbose}"
                 --  EState : {repr r.estate.terms}
 
 abbrev VCResults := Array VCResult
@@ -172,13 +202,13 @@ def getSolverFlags (options : Options) (solver : String) : Array String :=
   let setTimeout :=
     match solver with
     | "cvc5" => #[s!"--tlimit={options.solverTimeout*1000}"]
-    | "z3" => #[s!"-t:{options.solverTimeout*1000}"]
+    | "z3" => #[s!"-T:{options.solverTimeout}"]
     | _ => #[]
   produceModels ++ setTimeout
 
 def dischargeObligation
   (options : Options)
-  (vars : List (IdentT Visibility)) (smtsolver filename : String)
+  (vars : List (IdentT LMonoTy Visibility)) (smtsolver filename : String)
   (terms : List Term) (ctx : SMT.Context)
   : IO (Except Format (Result × EncoderState)) := do
   if !(← System.FilePath.isDir VC_folder_name) then
@@ -191,8 +221,8 @@ def dischargeObligation
   let _ ← solver.checkSat ids -- Will return unknown for Solver.fileWriter
   if options.verbose then IO.println s!"Wrote problem to {filename}."
   let flags := getSolverFlags options smtsolver
-  let solver_out ← runSolver smtsolver (#[filename] ++ flags)
-  match solverResult vars solver_out ctx estate with
+  let output ← runSolver smtsolver (#[filename] ++ flags)
+  match solverResult vars output ctx estate with
   | .error e => return .error e
   | .ok result => return .ok (result, estate)
 
@@ -210,7 +240,7 @@ def verifySingleEnv (smtsolver : String) (pE : Program × Env) (options : Option
       -- We don't need the SMT solver if PE (partial evaluation) is enough to
       -- reduce the consequent to true.
       if obligation.obligation.isTrue then
-        results := results.push { obligation, result := .unsat }
+        results := results.push { obligation, result := .unsat, verbose := options.verbose }
         continue
       -- If PE determines that the consequent is false and the path conditions
       -- are empty, then we can immediate report a verification failure. Note
@@ -222,7 +252,7 @@ def verifySingleEnv (smtsolver : String) (pE : Program × Env) (options : Option
         dbg_trace f!"\n\nObligation {obligation.label}: failed!\
                      \n\nResult obtained during partial evaluation.\
                      {if options.verbose then prog else ""}"
-        results := results.push { obligation, result := .sat .empty }
+        results := results.push { obligation, result := .sat .empty, verbose := options.verbose }
         if options.stopOnFirstError then break
       let obligation :=
       if options.removeIrrelevantAxioms then
@@ -232,6 +262,7 @@ def verifySingleEnv (smtsolver : String) (pE : Program × Env) (options : Option
         let cg := Program.toFunctionCG p
         let fns := obligation.obligation.getOps.map BoogieIdent.toPretty
         let relevant_fns := (fns ++ (CallGraph.getAllCalleesClosure cg fns)).dedup
+
         let irrelevant_axs := Program.getIrrelevantAxioms p relevant_fns
         let new_assumptions := Imperative.PathConditions.removeByNames obligation.assumptions irrelevant_axs
         { obligation with assumptions := new_assumptions }
@@ -245,7 +276,7 @@ def verifySingleEnv (smtsolver : String) (pE : Program × Env) (options : Option
                      {err}\n\n\
                      Evaluated program: {p}\n\n"
         let _ ← dbg_trace msg
-        results := results.push { obligation, result := .err msg }
+        results := results.push { obligation, result := .err msg, verbose := options.verbose }
         if options.stopOnFirstError then break
       | .ok (terms, ctx) =>
         -- let ufids := (ctx.ufs.map (fun f => f.id))
@@ -267,15 +298,15 @@ def verifySingleEnv (smtsolver : String) (pE : Program × Env) (options : Option
                 terms ctx)
         match ans with
         | .ok (result, estate) =>
-           results := results.push { obligation, result, estate }
+           results := results.push { obligation, result, estate, verbose := options.verbose }
            if result ≠ .unsat then
             let prog := f!"\n\nEvaluated program:\n{p}"
             dbg_trace f!"\n\nObligation {obligation.label}: could not be proved!\
-                         \n\nResult: {result}\
+                         \n\nResult: {result.formatWithVerbose options.verbose}\
                          {if options.verbose then prog else ""}"
            if options.stopOnFirstError then break
         | .error e =>
-           results := results.push { obligation, result := .err (toString e) }
+           results := results.push { obligation, result := .err (toString e), verbose := options.verbose }
            let prog := f!"\n\nEvaluated program:\n{p}"
            dbg_trace f!"\n\nObligation {obligation.label}: solver error!\
                         \n\nError: {e}\
@@ -283,10 +314,13 @@ def verifySingleEnv (smtsolver : String) (pE : Program × Env) (options : Option
            if options.stopOnFirstError then break
     return results
 
-def verify (smtsolver : String) (program : Program) (options : Options := Options.default) : EIO Format VCResults := do
-  match Boogie.typeCheckAndPartialEval options program with
+def verify (smtsolver : String) (program : Program)
+    (options : Options := Options.default)
+    (moreFns : @Lambda.Factory BoogieLParams := Lambda.Factory.default) :
+    EIO Format VCResults := do
+  match Boogie.typeCheckAndPartialEval options program moreFns with
   | .error err =>
-    .error f!"[Strata.Boogie] Type checking error: {format err}"
+    .error f!"[Strata.Boogie] Type checking error.\n{format err}"
   | .ok pEs =>
     let VCss ← if options.checkOnly then
                  pure []
@@ -300,27 +334,65 @@ end Boogie
 
 namespace Strata
 
-def Boogie.getProgram (p : Strata.Program) : Boogie.Program × Array String :=
-  TransM.run (translateProgram p)
+open Lean.Parser
 
-def typeCheck (env : Program) (options : Options := Options.default) :
+def typeCheck (ictx : InputContext) (env : Program) (options : Options := Options.default)
+    (moreFns : @Lambda.Factory Boogie.BoogieLParams := Lambda.Factory.default) :
   Except Std.Format Boogie.Program := do
-  let (program, errors) := Boogie.getProgram env
+  let (program, errors) := TransM.run ictx (translateProgram env)
   if errors.isEmpty then
     -- dbg_trace f!"AST: {program}"
-    Boogie.typeCheck options program
+    Boogie.typeCheck options program moreFns
   else
     .error s!"DDM Transform Error: {repr errors}"
 
-def verify (smtsolver : String) (env : Program)
-    (options : Options := Options.default) : IO Boogie.VCResults := do
-  let (program, errors) := Boogie.getProgram env
+def Boogie.getProgram
+  (p : Strata.Program)
+  (ictx : InputContext := Inhabited.default) : Boogie.Program × Array String :=
+  TransM.run ictx (translateProgram p)
+
+def verify
+    (smtsolver : String) (env : Program)
+    (ictx : InputContext := Inhabited.default)
+    (options : Options := Options.default)
+    (moreFns : @Lambda.Factory Boogie.BoogieLParams := Lambda.Factory.default)
+    : IO Boogie.VCResults := do
+  let (program, errors) := Boogie.getProgram env ictx
   if errors.isEmpty then
     -- dbg_trace f!"AST: {program}"
     EIO.toIO (fun f => IO.Error.userError (toString f))
-                (Boogie.verify smtsolver program options)
+                (Boogie.verify smtsolver program options moreFns)
   else
     panic! s!"DDM Transform Error: {repr errors}"
+
+/-- A diagnostic produced by analyzing a file -/
+structure Diagnostic where
+  start : Lean.Position
+  ending : Lean.Position
+  message : String
+  deriving Repr, BEq
+
+def toDiagnostic (vcr : Boogie.VCResult) : Option Diagnostic := do
+  -- Only create a diagnostic if the result is not .unsat (i.e., verification failed)
+  match vcr.result with
+  | .unsat => none  -- Verification succeeded, no diagnostic
+  | result =>
+    -- Extract file range from metadata
+    let fileRangeElem ← vcr.obligation.metadata.findElem Imperative.MetaData.fileRange
+    match fileRangeElem.value with
+    | .fileRange range =>
+      let message := match result with
+        | .sat _ => "assertion does not hold"
+        | .unknown => "assertion could not be proved"
+        | .err msg => s!"verification error: {msg}"
+        | _ => "verification failed"
+      some {
+        -- Subtract headerOffset to account for program header we added
+        start := { line := range.start.line, column := range.start.column }
+        ending := { line := range.ending.line, column := range.ending.column }
+        message := message
+      }
+    | _ => none
 
 end Strata
 

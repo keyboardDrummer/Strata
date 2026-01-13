@@ -37,7 +37,10 @@ def bad_prog : Program := { decls := [
       }
 ]}
 
-/-- info: error: Cannot unify differently named type constructors bool and int! -/
+/--
+info: error: Impossible to unify (Foo bool bool) with (Foo int bool).
+First mismatch: bool with int.
+-/
 #guard_msgs in
 #eval do let ans ← typeCheckAndPartialEval Options.default bad_prog
          return (format ans)
@@ -80,7 +83,7 @@ Proof Obligation:
 ---
 info: ok: [(type Boogie.Boundedness.Infinite Foo [_, _]
   type FooAlias a := (Foo int bool)
-  func fooAliasVal : ∀[α]. () → (FooAlias α);
+  func fooAliasVal :  () → (Foo int bool);
   func fooVal :  () → (Foo int bool);
   (procedure P :  () → ())
   modifies: []
@@ -127,6 +130,7 @@ info: ok: [(type Boogie.Boundedness.Infinite Foo [_, _]
   func Bool.Not :  ((x : bool)) → bool;
   func Str.Length :  ((x : string)) → int;
   func Str.Concat :  ((x : string) (y : string)) → string;
+  func Str.Substr :  ((x : string) (i : int) (n : int)) → string;
   func Str.ToRegEx :  ((x : string)) → regex;
   func Str.InRegEx :  ((x : string) (y : regex)) → bool;
   func Re.All :  () → regex;
@@ -139,6 +143,7 @@ info: ok: [(type Boogie.Boundedness.Infinite Foo [_, _]
   func Re.Union :  ((x : regex) (y : regex)) → regex;
   func Re.Inter :  ((x : regex) (y : regex)) → regex;
   func Re.Comp :  ((x : regex)) → regex;
+  func Re.None :  () → regex;
   func old : ∀[a]. ((x : a)) → a;
   func select : ∀[k, v]. ((m : (Map k v)) (i : k)) → v;
   func update : ∀[k, v]. ((m : (Map k v)) (i : k) (x : v)) → (Map k v);
@@ -273,9 +278,11 @@ info: ok: [(type Boogie.Boundedness.Infinite Foo [_, _]
   func Bv64.SLe :  ((x : bv64) (y : bv64)) → bool;
   func Bv64.SGt :  ((x : bv64) (y : bv64)) → bool;
   func Bv64.SGe :  ((x : bv64) (y : bv64)) → bool;
-  func fooAliasVal : ∀[α]. () → (FooAlias α);
+  func fooAliasVal :  () → (Foo int bool);
   func fooVal :  () → (Foo int bool);
   ⏎
+  ⏎
+  Datatypes:
   ⏎
   Path Conditions:
   ⏎
@@ -311,12 +318,12 @@ def outOfScopeVarProg : Program := { decls := [
               body := [
                 Statement.set "y" eb[((~Bool.Or x) x)],
                 .ite eb[(x == #true)]
-                  { ss := [Statement.init "q" t[int] eb[#0],
+                  [Statement.init "q" t[int] eb[#0],
                            Statement.set "q" eb[#1],
-                           Statement.set "y" eb[#true]] }
-                  { ss := [Statement.init "q" t[int] eb[#0],
+                           Statement.set "y" eb[#true]]
+                  [Statement.init "q" t[int] eb[#0],
                            Statement.set "q" eb[#2],
-                           Statement.set "y" eb[#true]] },
+                           Statement.set "y" eb[#true]],
                 Statement.assert "y_check" eb[y == #true],
                 Statement.assert "q_check" eb[q == #1]
               ]
@@ -330,6 +337,54 @@ Free Variables: [q]
 #guard_msgs in
 #eval do let ans ← typeCheckAndPartialEval Options.default outOfScopeVarProg
          return (format ans)
+
+---------------------------------------------------------------------
+
+def polyFuncProg : Program := { decls := [
+  -- function identity<a>(x : a) : a;
+  .func { name := "identity",
+          typeArgs := ["a"],
+          inputs := [("x", .ftvar "a")],
+          output := .ftvar "a" },
+  -- function makePair<a, b>(x : a, y : b) : Map a b;
+  .func { name := "makePair",
+          typeArgs := ["a", "b"],
+          inputs := [("x", .ftvar "a"), ("y", .ftvar "b")],
+          output := .tcons "Map" [.ftvar "a", .ftvar "b"] },
+  -- procedure Test()
+  .proc { header := { name := "Test",
+                      typeArgs := [],
+                      inputs := [],
+                      outputs := [] },
+          spec := { modifies := [],
+                    preconditions := [],
+                    postconditions := [] },
+          body := [
+            -- var m : Map int bool;
+            Statement.init "m" (.forAll [] (.tcons "Map" [.tcons "int" [], .tcons "bool" []])) eb[init_m_0],
+            -- m := makePair(identity(42), identity(true));
+            Statement.set "m" eb[((~makePair (~identity #42)) (~identity #true))]
+          ]
+  }
+]}
+
+/--
+info: [Strata.Boogie] Type checking succeeded.
+
+---
+info: ok: func identity : ∀[$__ty0]. ((x : $__ty0)) → $__ty0;
+func makePair : ∀[$__ty1, $__ty2]. ((x : $__ty1) (y : $__ty2)) → (Map $__ty1 $__ty2);
+(procedure Test :  () → ())
+modifies: []
+preconditions: 
+postconditions: 
+body: init (m : (Map int bool)) := (init_m_0 : (Map int bool))
+m := (((~makePair : (arrow int (arrow bool (Map int bool)))) ((~identity : (arrow int int)) #42)) ((~identity : (arrow bool bool)) #true))
+-/
+#guard_msgs in
+#eval do
+  let ans ← typeCheck Options.default polyFuncProg
+  return (format ans)
 
 ---------------------------------------------------------------------
 

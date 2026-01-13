@@ -135,7 +135,7 @@ private def testProgram1 : Cmds Expression :=
 info: Commands:
 init (x : int) := #0
 x := #10
-assert [x_value_eq] (#true : bool)
+assert [x_value_eq] #true
 
 State:
 Error:
@@ -154,6 +154,8 @@ Factory Functions:
 
 
 
+Datatypes:
+
 Path Conditions:
 
 
@@ -163,10 +165,10 @@ Deferred Proof Obligations:
 Label: x_value_eq
 Assumptions:
 Proof Obligation:
-(#true : bool)
+#true
 -/
 #guard_msgs in
-#eval format $ Imperative.Cmds.eval Env.init testProgram1
+#eval format $ Imperative.Cmds.eval (Env.init (empty_factory := true)) testProgram1
 
 private def testProgram2 : Cmds Expression :=
   [.init "x" t[int] eb[(y : int)],
@@ -195,6 +197,8 @@ Factory Functions:
 
 
 
+Datatypes:
+
 Path Conditions:
 
 
@@ -207,7 +211,7 @@ Proof Obligation:
 ((y : int) == #12)
 -/
 #guard_msgs in
-#eval format $ Imperative.Cmds.eval Env.init testProgram2
+#eval format $ Imperative.Cmds.eval (Env.init (empty_factory := true)) testProgram2
 
 end CmdEval
 ---------------------------------------------------------------------

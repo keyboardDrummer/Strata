@@ -158,6 +158,12 @@ inductive Op.Strings : Type where
   | re_index : Nat → Op.Strings
 deriving Repr, DecidableEq, Inhabited, Hashable
 
+inductive Op.DatatypeFuncs : Type where
+  | constructor : Op.DatatypeFuncs
+  | tester : Op.DatatypeFuncs
+  | selector : Op.DatatypeFuncs
+deriving Repr, DecidableEq, Inhabited, Hashable
+
 inductive Op : Type where
   -- SMTLib core theory of equality with uninterpreted functions (`UF`)
   | core : Op.Core → Op
@@ -171,6 +177,8 @@ inductive Op : Type where
   | triggers
   -- Core ADT operators with a trusted mapping to SMT
   | option_get
+  -- Datatype ops (for user-defined algebraic datatypes)
+  | datatype_op : Op.DatatypeFuncs → String → Op
 deriving Repr, DecidableEq, Inhabited, Hashable
 
 -- Generate abbreviations like `Op.not` for `Op.core Op.Core.not` for
@@ -182,7 +190,7 @@ elab "#genOpAbbrevs" : command => do
 
   if let some (.inductInfo coreInfo) := env.find? `Strata.SMT.Op.Core then
     for ctor in coreInfo.ctors do
-      let ctorName := ctor.toString.split (· == '.') |>.getLast!
+      let ctorName := ctor.toString.splitToList (· == '.') |>.getLast!
       let name := Lean.Name.mkStr2 "Op" ctorName
       if ctorName == "uf" then
         let abbrevCmd ← `(command| abbrev $(mkIdent name) (arg : UF) := Op.core (Op.Core.uf arg))
@@ -193,14 +201,14 @@ elab "#genOpAbbrevs" : command => do
 
   if let some (.inductInfo numInfo) := env.find? `Strata.SMT.Op.Num then
     for ctor in numInfo.ctors do
-      let ctorName := ctor.toString.split (· == '.') |>.getLast!
+      let ctorName := ctor.toString.splitToList (· == '.') |>.getLast!
       let name := Lean.Name.mkStr2 "Op" ctorName
       let abbrevCmd ← `(command| abbrev $(mkIdent name) := Op.num $(mkIdent ctor))
       abbrevs := abbrevs.push (name, abbrevCmd)
 
   if let some (.inductInfo bvInfo) := env.find? `Strata.SMT.Op.BV then
     for ctor in bvInfo.ctors do
-      let ctorName := ctor.toString.split (· == '.') |>.getLast!
+      let ctorName := ctor.toString.splitToList (· == '.') |>.getLast!
       let name := Lean.Name.mkStr2 "Op" ctorName
       if ctorName == "zero_extend" then
         let abbrevCmd ← `(command| abbrev $(mkIdent name) (n : Nat) := Op.bv (Op.BV.zero_extend n))
@@ -211,7 +219,7 @@ elab "#genOpAbbrevs" : command => do
 
   if let some (.inductInfo strInfo) := env.find? `Strata.SMT.Op.Strings then
     for ctor in strInfo.ctors do
-      let ctorName := ctor.toString.split (· == '.') |>.getLast!
+      let ctorName := ctor.toString.splitToList (· == '.') |>.getLast!
       let name := Lean.Name.mkStr2 "Op" ctorName
       if ctorName == "re_index" then
         let abbrevCmd ← `(command| abbrev $(mkIdent name) (n : Nat) := Op.str (Op.Strings.re_index n))
@@ -285,6 +293,8 @@ def Op.mkName : Op → String
   | .zero_extend _ => "zero_extend"
   | .triggers      => "triggers"
   | .option_get    => "option.get"
+  | .datatype_op .tester name => s!"is-{name}"
+  | .datatype_op _ name => name
   | .str_length    => "str.len"
   | .str_concat    => "str.++"
   | .str_lt        => "str.<"

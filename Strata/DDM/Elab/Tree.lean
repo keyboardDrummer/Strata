@@ -3,11 +3,15 @@
 
   SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
-import Strata.DDM.Format
+module
+
+public import Strata.DDM.AST
+public import Strata.DDM.Format
 set_option autoImplicit false
 
 open Lean (Syntax)
 
+public section
 namespace Strata.Elab
 
 /--
@@ -36,10 +40,10 @@ instance : Coe TypeExpr BindingKind where
   coe tp := .expr tp
 
 def ofCat (c : SyntaxCat) : BindingKind :=
-  match c with
-  | .atom _ q`Init.Expr => panic! "Init.Expr may not appear as a category."
-  | .atom loc q`Init.Type => .type loc [] .none
-  | c => .cat c
+  match c.name with
+  | q`Init.Expr => panic! "Init.Expr may not appear as a category."
+  | q`Init.Type => .type c.ann [] .none
+  | _ => .cat c
 
 def categoryOf : BindingKind → SyntaxCat
 | .expr tp => .atom tp.ann q`Init.Expr
@@ -47,10 +51,11 @@ def categoryOf : BindingKind → SyntaxCat
 | .cat c => c
 
 instance : ToStrataFormat BindingKind where
-  mformat
-  | .expr tp => mformat tp
-  | .type _ params _ => mformat (params.foldr (init := f!"Type") (fun a f => f!"({a} : Type) -> {f}"))
-  | .cat c => mformat c
+  mformat bk := private
+    match bk with
+    | .expr tp => mformat tp
+    | .type _ params _ => mformat (params.foldr (init := f!"Type") (fun a f => f!"({a} : Type) -> {f}"))
+    | .cat c => mformat c
 
 end BindingKind
 
@@ -82,7 +87,7 @@ protected def isEmpty (b:Bindings) := b.toArray.isEmpty
 protected def size (b:Bindings) := b.toArray.size
 
 instance : GetElem Bindings Nat Binding (fun bs i => i < bs.size) where
-  getElem bindings idx p := bindings.toArray[idx]'p
+  getElem bindings idx p := bindings.toArray[idx]'(by exact p)
 
 protected def empty : Bindings where
   toArray := #[]
@@ -216,21 +221,17 @@ structure TypeInfo extends ElabInfo where
   isInferred : Bool
 deriving Inhabited, Repr
 
-structure IdentInfo extends ElabInfo where
-  val : String
+structure ConstInfo (α : Type) extends ElabInfo where
+  val : α
 deriving Inhabited, Repr
 
-structure NumInfo extends ElabInfo where
-  val : Nat
-deriving Inhabited, Repr
+abbrev IdentInfo := ConstInfo String
 
-structure DecimalInfo extends ElabInfo where
-  val : Decimal
-deriving Inhabited, Repr
+abbrev NumInfo := ConstInfo Nat
 
-structure StrlitInfo extends ElabInfo where
-  val : String
-deriving Inhabited, Repr
+abbrev DecimalInfo := ConstInfo Decimal
+
+abbrev StrlitInfo := ConstInfo String
 
 structure OptionInfo extends ElabInfo where
   deriving Inhabited, Repr
@@ -254,6 +255,7 @@ inductive Info
 | ofNumInfo (info : NumInfo)
 | ofDecimalInfo (info : DecimalInfo)
 | ofStrlitInfo (info : StrlitInfo)
+| ofBytesInfo (info : ConstInfo ByteArray)
 | ofOptionInfo (info : OptionInfo)
 | ofSeqInfo (info : SeqInfo)
 | ofCommaSepInfo (info : CommaSepInfo)
@@ -287,6 +289,7 @@ def elabInfo (info : Info) : ElabInfo :=
   | .ofNumInfo info => info.toElabInfo
   | .ofDecimalInfo info => info.toElabInfo
   | .ofStrlitInfo info => info.toElabInfo
+  | .ofBytesInfo info => info.toElabInfo
   | .ofOptionInfo info => info.toElabInfo
   | .ofSeqInfo info => info.toElabInfo
   | .ofCommaSepInfo info => info.toElabInfo
@@ -303,18 +306,18 @@ deriving Inhabited, Repr
 
 namespace Tree
 
-def info : Tree → Info
+@[expose] def info : Tree → Info
 | .node info _ => info
 
-def children : Tree → Array Tree
+@[expose] def children : Tree → Array Tree
 | .node _ c => c
 
 instance : GetElem Tree Nat Tree fun t i => i < t.children.size where
   getElem xs i h := xs.children[i]
 
 @[simp]
-theorem node_getElem (info : Info) (c : Array Tree) (i : Nat) (p : _) :
-  (node info c)[i]'p = c[i]'p := rfl
+theorem node_getElem (info : Info) (c : Array Tree) (i : Nat) (p : i < (node info c).children.size) :
+  (node info c)[i]'p = c[i]'(by apply p) := by rfl
 
 def arg : Tree → Arg
 | .node info children =>
@@ -327,6 +330,7 @@ def arg : Tree → Arg
   | .ofNumInfo info => .num info.loc info.val
   | .ofDecimalInfo info => .decimal info.loc info.val
   | .ofStrlitInfo info => .strlit info.loc info.val
+  | .ofBytesInfo info => .bytes info.loc info.val
   | .ofOptionInfo _ =>
     let r :=
       match children with
@@ -349,7 +353,7 @@ def resultContext (t : Tree) : TypingContext :=
   | .ofOperationInfo info => info.resultCtx
   | .ofCatInfo info => info.inputCtx
   | .ofExprInfo _ | .ofTypeInfo _ => t.info.inputCtx
-  | .ofIdentInfo _ | .ofNumInfo _ | .ofDecimalInfo _ | .ofStrlitInfo _ => t.info.inputCtx
+  | .ofIdentInfo _ | .ofNumInfo _ | .ofDecimalInfo _ | .ofStrlitInfo _ | .ofBytesInfo .. => t.info.inputCtx
   | .ofOptionInfo info =>
     if p : t.children.size > 0 then
       have q : sizeOf t[0] < sizeOf t := sizeOf_children _ _ _

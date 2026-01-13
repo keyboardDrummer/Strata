@@ -30,6 +30,9 @@ theorem typeCheckCmdWF: Statement.typeCheckCmd C T p c = Except.ok v
   sorry
   sorry
   sorry
+  sorry
+  sorry
+  sorry
 
 theorem Statement.typeCheckAux_elim_acc: Statement.typeCheckAux.go C p proc T ss (acc1 ++ acc2) = Except.ok (pp, T') ↔
   (List.IsPrefix acc2.reverse pp ∧ Statement.typeCheckAux.go C p proc T ss acc1 = Except.ok (pp.drop acc2.length, T'))
@@ -107,7 +110,6 @@ theorem Statement.typeCheckAux_go_WF :
       constructor
     | goto l =>
       simp [Except.bind] at tcok
-      split at tcok <;> try contradiction
       split at tcok <;> try contradiction
       have tcok := Statement.typeCheckAux_elim_singleton tcok
       rw[List.append_cons];
