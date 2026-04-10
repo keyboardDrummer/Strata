@@ -16,6 +16,14 @@ This module defines the Laurel grammar using the bidirectional syntax
 combinator library from `Strata.Util.Syntax`. The same grammar definition
 is used for both parsing (String → Laurel.Program) and pretty-printing
 (Laurel.Program → String).
+
+## Mutual recursion
+
+The expression grammar is inherently mutually recursive (e.g. `atom` references
+`prec0` for sub-expressions, while `prec0` references `postfix` which references
+`atom`). We resolve this using a `GrammarLibrary` that maps names (`"atom"`,
+`"postfix"`, `"prec0"`) to grammars, allowing each grammar to reference the
+others via `ref`.
 -/
 
 namespace Strata.Laurel.CombinatorGrammar
@@ -46,8 +54,6 @@ private def reservedWords : List String :=
    "int", "bool", "real", "float64", "string", "is", "as",
    "extends", "invariant", "witness", "where", "summary"]
 
-/-! ## Type syntax -/
-
 private def identNotReserved : Syntax String :=
   { parse := fun s => do
       let (name, s') ← ident.parse s
@@ -57,27 +63,26 @@ private def identNotReserved : Syntax String :=
       if reservedWords.contains name then none
       else ident.print name }
 
-partial def highTypeSyntax : Syntax HighTypeMd :=
+/-! ## Type syntax -/
+
+private partial def mkHighTypeSyntax (_ : Unit) : Syntax HighTypeMd :=
+  let self := mkHighTypeSyntax ()
   alt (map { apply := fun () => some (wm .TInt), unapply := fun t => if t.val matches .TInt then some () else none } (keyword "int"))
   (alt (map { apply := fun () => some (wm .TBool), unapply := fun t => if t.val matches .TBool then some () else none } (keyword "bool"))
   (alt (map { apply := fun () => some (wm .TReal), unapply := fun t => if t.val matches .TReal then some () else none } (keyword "real"))
   (alt (map { apply := fun () => some (wm .TFloat64), unapply := fun t => if t.val matches .TFloat64 then some () else none } (keyword "float64"))
   (alt (map { apply := fun () => some (wm .TString), unapply := fun t => if t.val matches .TString then some () else none } (keyword "string"))
-  (alt coreTypeSyntax
-  (alt mapTypeSyntax
+  (alt (map { apply := fun ((), name) => some (wm (.TCore name))
+              unapply := fun t => match t.val with | .TCore s => some ((), s) | _ => none }
+         (seq (keyword "Core") ident))
+  (alt (map { apply := fun (((), k), v) => some (wm (.TMap k v))
+              unapply := fun t => match t.val with | .TMap k v => some (((), k), v) | _ => none }
+         (seq (seq (keyword "Map") self) self))
   (map { apply := fun name => some (wm (.UserDefined (mkId name)))
          unapply := fun t => match t.val with | .UserDefined id => some id.text | _ => none }
     identNotReserved)))))))
-where
-  coreTypeSyntax : Syntax HighTypeMd :=
-    map { apply := fun ((), name) => some (wm (.TCore name))
-          unapply := fun t => match t.val with | .TCore s => some ((), s) | _ => none }
-      (seq (keyword "Core") ident)
-  mapTypeSyntax : Syntax HighTypeMd :=
-    map { apply := fun (((), k), v) => some (wm (.TMap k v))
-          unapply := fun t => match t.val with | .TMap k v => some (((), k), v) | _ => none }
-      (seq (seq (keyword "Map") highTypeSyntax) highTypeSyntax)
 
+def highTypeSyntax : Syntax HighTypeMd := mkHighTypeSyntax ()
 
 /-! ## Parameter syntax -/
 
@@ -91,284 +96,7 @@ def parameterSyntax : Syntax Parameter :=
 def parameterList : Syntax (List Parameter) :=
   sepBy parameterSyntax (token ",")
 
-/-! ## Expression syntax (Pratt-style precedence climbing) -/
-
--- Forward declaration for mutual recursion
-private partial def stmtExprAtom : Syntax StmtExprMd :=
-  alt literalBoolTrue
-  (alt literalBoolFalse
-  (alt holeSyntax
-  (alt nondetHoleSyntax
-  (alt negSyntax
-  (alt notSyntax
-  (alt returnSyntax
-  (alt assertSyntax
-  (alt assumeSyntax
-  (alt exitSyntax
-  (alt varDeclSyntax
-  (alt newSyntax
-  (alt ifSyntax
-  (alt whileSyntax
-  (alt forLoopSyntax
-  (alt forallSyntax
-  (alt existsSyntax
-  (alt blockSyntax
-  (alt parenSyntax
-  (alt decimalLitSyntax
-  (alt intLitSyntax
-  (alt stringLitSyntax
-  callOrIdentSyntax)))))))))))))))))))))
-where
-  literalBoolTrue : Syntax StmtExprMd :=
-    map { apply := fun () => some (wm (.LiteralBool true))
-          unapply := fun e => match e.val with | .LiteralBool true => some () | _ => none }
-      (keyword "true")
-  literalBoolFalse : Syntax StmtExprMd :=
-    map { apply := fun () => some (wm (.LiteralBool false))
-          unapply := fun e => match e.val with | .LiteralBool false => some () | _ => none }
-      (keyword "false")
-  holeSyntax : Syntax StmtExprMd :=
-    map { apply := fun () => some (wm (.Hole true none))
-          unapply := fun e => match e.val with | .Hole true none => some () | _ => none }
-      (token "<?>")
-  nondetHoleSyntax : Syntax StmtExprMd :=
-    map { apply := fun () => some (wm (.Hole false none))
-          unapply := fun e => match e.val with | .Hole false none => some () | _ => none }
-      (token "<??>")
-  negSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((), inner) => some (wm (.PrimitiveOp .Neg [inner]))
-          unapply := fun e => match e.val with
-            | .PrimitiveOp .Neg [inner] => some ((), inner)
-            | _ => none }
-      (seq (text "-") stmtExprAtom)
-  notSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((), inner) => some (wm (.PrimitiveOp .Not [inner]))
-          unapply := fun e => match e.val with
-            | .PrimitiveOp .Not [inner] => some ((), inner)
-            | _ => none }
-      (seq (text "!") stmtExprAtom)
-  returnSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((), v) => some (wm (.Return (some v)))
-          unapply := fun e => match e.val with
-            | .Return (some v) => some ((), v)
-            | _ => none }
-      (seq (keyword "return") stmtExprPrec0)
-  assertSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((), cond) => some (wm (.Assert cond))
-          unapply := fun e => match e.val with
-            | .Assert cond => some ((), cond)
-            | _ => none }
-      (seq (keyword "assert") stmtExprPrec0)
-  assumeSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((), cond) => some (wm (.Assume cond))
-          unapply := fun e => match e.val with
-            | .Assume cond => some ((), cond)
-            | _ => none }
-      (seq (keyword "assume") stmtExprPrec0)
-  exitSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((), name) => some (wm (.Exit name))
-          unapply := fun e => match e.val with
-            | .Exit name => some ((), name)
-            | _ => none }
-      (seq (keyword "exit") ident)
-  varDeclSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((((), name), ((), ty)), init) =>
-            some (wm (.LocalVariable (mkId name) ty
-              (init.map Prod.snd)))
-          unapply := fun e => match e.val with
-            | .LocalVariable id ty init =>
-              some ((((), id.text), ((), ty)),
-                init.map fun v => ((), v))
-            | _ => none }
-      (seq (seq (seq (keyword "var") identNotReserved)
-                (seq (token ":") highTypeSyntax))
-           (optional (seq (token ":=") stmtExprPrec0)))
-  newSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((), name) => some (wm (.New (mkId name)))
-          unapply := fun e => match e.val with
-            | .New id => some ((), id.text)
-            | _ => none }
-      (seq (keyword "new") ident)
-  ifSyntax : Syntax StmtExprMd :=
-    map { apply := fun (((((), cond), ((), thenBr)), elseBr)) =>
-            some (wm (.IfThenElse cond thenBr (elseBr.map Prod.snd)))
-          unapply := fun e => match e.val with
-            | .IfThenElse cond thenBr elseBr =>
-              some (((((), cond), ((), thenBr)),
-                elseBr.map fun v => ((), v)))
-            | _ => none }
-      (seq (seq (seq (keyword "if") stmtExprPrec0)
-                (seq (keyword "then") stmtExprPrec0))
-           (optional (seq (keyword "else") stmtExprPrec0)))
-  whileSyntax : Syntax StmtExprMd :=
-    map { apply := fun (((((), ((), cond)), ()), invs), body) =>
-            some (wm (.While cond (invs.map Prod.snd) none body))
-          unapply := fun e => match e.val with
-            | .While cond invs none body =>
-              some (((((), ((), cond)), ()), invs.map fun v => ((), v)), body)
-            | _ => none }
-      (seq (seq (seq (seq (keyword "while") (seq (token "(") stmtExprPrec0))
-                     (token ")"))
-                (many (seq (keyword "invariant") stmtExprPrec0)))
-           stmtExprPrec0)
-  forLoopSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((((((), ((), init)), ((), cond)), ((), step)), ((), invs)), body) =>
-            let whileBody := wm (.Block [body, step] none)
-            let whileStmt := wm (.While cond (invs.map Prod.snd) none whileBody)
-            some (wm (.Block [init, whileStmt] none))
-          unapply := fun _ => none -- for-loops are desugared; printing not needed
-        }
-      (seq (seq (seq (seq (seq (keyword "for") (seq (token "(") stmtExprPrec0))
-                          (seq (token ";") stmtExprPrec0))
-                     (seq (token ";") stmtExprPrec0))
-                (seq (token ")") (many (seq (keyword "invariant") stmtExprPrec0))))
-           stmtExprPrec0)
-  forallSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((((((), ((), name)), ((), ty)), ()), trigger), body) =>
-            some (wm (.Forall { name := mkId name, type := ty }
-              (trigger.map fun (_, (_, e)) => e) body))
-          unapply := fun e => match e.val with
-            | .Forall param trigger body =>
-              some ((((((), ((), param.name.text)), ((), param.type)), ()),
-                trigger.map fun t => ((), ((), t))), body)
-            | _ => none }
-      (seq (seq (seq (seq (seq (keyword "forall") (seq (token "(") identNotReserved))
-                          (seq (token ":") highTypeSyntax))
-                     (token ")"))
-                (optional (seq (token "{") (seq stmtExprPrec0 (token "}")))))
-           (seqRight (token "=>") stmtExprPrec0))
-  existsSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((((((), ((), name)), ((), ty)), ()), trigger), body) =>
-            some (wm (.Exists { name := mkId name, type := ty }
-              (trigger.map fun (_, (_, e)) => e) body))
-          unapply := fun e => match e.val with
-            | .Exists param trigger body =>
-              some ((((((), ((), param.name.text)), ((), param.type)), ()),
-                trigger.map fun t => ((), ((), t))), body)
-            | _ => none }
-      (seq (seq (seq (seq (seq (keyword "exists") (seq (token "(") identNotReserved))
-                          (seq (token ":") highTypeSyntax))
-                     (token ")"))
-                (optional (seq (token "{") (seq stmtExprPrec0 (token "}")))))
-           (seqRight (token "=>") stmtExprPrec0))
-  blockSyntax : Syntax StmtExprMd :=
-    alt labelledBlockSyntax unlabelledBlockSyntax
-  unlabelledBlockSyntax : Syntax StmtExprMd :=
-    map { apply := fun (((), stmts), ()) =>
-            some (wm (.Block stmts none))
-          unapply := fun e => match e.val with
-            | .Block stmts none => some (((), stmts), ())
-            | _ => none }
-      (seq (seq (token "{") (sepBy stmtExprPrec0 (token ";")))
-           (token "}"))
-  labelledBlockSyntax : Syntax StmtExprMd :=
-    map { apply := fun ((((), stmts), ()), label) =>
-            some (wm (.Block stmts (some label)))
-          unapply := fun e => match e.val with
-            | .Block stmts (some label) => some ((((), stmts), ()), label)
-            | _ => none }
-      (seq (seq (seq (token "{") (sepBy stmtExprPrec0 (token ";")))
-                (token "}"))
-           identNotReserved)
-  parenSyntax : Syntax StmtExprMd :=
-    map { apply := fun (((), e), ()) => some e
-          unapply := fun e => some (((), e), ()) }
-      (seq (seq (token "(") stmtExprPrec0) (token ")"))
-  decimalLitSyntax : Syntax StmtExprMd :=
-    map { apply := fun (intPart, fracPart) =>
-            let fracStr := toString fracPart
-            let exp : Int := -(fracStr.length : Int)
-            let mantissa : Int := intPart * (10 ^ fracStr.length : Int) + fracPart
-            some (wm (.LiteralDecimal ⟨mantissa, exp⟩))
-          unapply := fun e => match e.val with
-            | .LiteralDecimal d =>
-              if d.exponent < 0 then
-                let width := (-d.exponent).natAbs
-                let ne := (10 : Int) ^ width
-                let intPart := d.mantissa / ne
-                let fracPart := (d.mantissa % ne).natAbs
-                some (intPart, fracPart)
-              else none
-            | _ => none }
-      decimal
-  intLitSyntax : Syntax StmtExprMd :=
-    map { apply := fun n => some (wm (.LiteralInt n))
-          unapply := fun e => match e.val with
-            | .LiteralInt n => some n
-            | _ => none }
-      int
-  stringLitSyntax : Syntax StmtExprMd :=
-    map { apply := fun s => some (wm (.LiteralString s))
-          unapply := fun e => match e.val with
-            | .LiteralString s => some s
-            | _ => none }
-      stringLit
-  callOrIdentSyntax : Syntax StmtExprMd :=
-    { parse := fun s => do
-        let (name, s') ← identNotReserved.parse s
-        -- Try call syntax: name(args)
-        match (token "(").parse s' with
-        | some ((), s'') =>
-          let (args, s''') ← (sepBy stmtExprPrec0 (token ",")).parse s''
-          let ((), s4) ← (token ")").parse s'''
-          return (wm (.StaticCall (mkId name) args), s4)
-        | none =>
-          return (wm (.Identifier (mkId name)), s')
-      print := fun e => match e.val with
-        | .StaticCall callee args => do
-          let argsStr ← args.mapM fun a => stmtExprPrec0.print a
-          some s!"{callee.text}({String.intercalate ", " argsStr})"
-        | .Identifier id => some id.text
-        | _ => none }
-
-
-/-! ## Postfix: field access -/
-
-private partial def stmtExprPostfix : Syntax StmtExprMd :=
-  { parse := fun s => do
-      let (base, s') ← stmtExprAtom.parse s
-      applyPostfix base s'
-    print := fun e => match e.val with
-      | .FieldSelect target field => do
-        let tStr ← stmtExprPostfix.print target
-        some s!"{tStr}#{field.text}"
-      | .IsType target ty => do
-        let tStr ← stmtExprPostfix.print target
-        let tyStr ← highTypeSyntax.print ty
-        some s!"{tStr} is {tyStr}"
-      | .AsType target ty => do
-        let tStr ← stmtExprPostfix.print target
-        let tyStr ← highTypeSyntax.print ty
-        some s!"{tStr} as {tyStr}"
-      | _ => stmtExprAtom.print e }
-where
-  applyPostfix (base : StmtExprMd) (s : PState) : Option (StmtExprMd × PState) :=
-    -- Try field access: #field
-    match (token "#").parse s with
-    | some ((), s') =>
-      match ident.parse s' with
-      | some (field, s'') =>
-        applyPostfix (wm (.FieldSelect base (mkId field))) s''
-      | none => some (base, s)
-    | none =>
-      -- Try "is Type"
-      match (keyword "is").parse s with
-      | some ((), s') =>
-        match identNotReserved.parse s' with
-        | some (tyName, s'') =>
-          applyPostfix (wm (.IsType base (wm (.UserDefined (mkId tyName))))) s''
-        | none => some (base, s)
-      | none =>
-        -- Try "as Type"
-        match (keyword "as").parse s with
-        | some ((), s') =>
-          match identNotReserved.parse s' with
-          | some (tyName, s'') =>
-            applyPostfix (wm (.AsType base (wm (.UserDefined (mkId tyName))))) s''
-          | none => some (base, s)
-        | none => some (base, s)
-
-/-! ## Binary operators with precedence climbing -/
+/-! ## Binary operators -/
 
 private structure BinOp where
   sym : String
@@ -398,68 +126,289 @@ private def binOps : List BinOp := [
   { sym := " % ", op := .Mod, prec := 70 }
 ]
 
+private def isWsChar (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
+
+private def countWsPrefix (s : String) : Nat :=
+  s.toList.takeWhile isWsChar |>.length
+
 private def tryParseBinOp (s : PState) : Option (BinOp × PState) :=
-  -- Try to match any binary operator at the current position
-  -- We need to skip whitespace first, then try operators
-  let rest := (s.input.drop s.pos).trimLeft
-  let wsConsumed := (s.input.drop s.pos).length - rest.length
+  let rest := (s.input.drop s.pos).toString
+  let wsConsumed := countWsPrefix rest
   let s' := { s with pos := s.pos + wsConsumed }
   binOps.findSome? fun bop =>
-    let trimSym := bop.sym.trimLeft
-    let rest' := s.input.drop s'.pos
+    let trimSym := (bop.sym.dropWhile isWsChar).toString
+    let rest' := (s.input.drop s'.pos).toString
     if rest'.startsWith trimSym then
       some (bop, { s' with pos := s'.pos + trimSym.length })
     else none
 
-private partial def parsePrecClimb (minPrec : Nat) (s : PState) : Option (StmtExprMd × PState) := do
-  let (mut lhs, mut st) ← stmtExprPostfix.parse s
-  let mut continue_ := true
-  while continue_ do
+private def opSym (op : Operation) : Option String :=
+  binOps.findSome? fun bop => if operationBEq bop.op op then some bop.sym else none
+
+/-! ## Expression syntax helpers -/
+
+
+private partial def applyPostfix (base : StmtExprMd) (s : PState) : Option (StmtExprMd × PState) :=
+  match (token "#").parse s with
+  | some ((), s') =>
+    match ident.parse s' with
+    | some (field, s'') =>
+      applyPostfix (wm (.FieldSelect base (mkId field))) s''
+    | none => some (base, s)
+  | none =>
+    match (keyword "is").parse s with
+    | some ((), s') =>
+      match identNotReserved.parse s' with
+      | some (tyName, s'') =>
+        applyPostfix (wm (.IsType base (wm (.UserDefined (mkId tyName))))) s''
+      | none => some (base, s)
+    | none =>
+      match (keyword "as").parse s with
+      | some ((), s') =>
+        match identNotReserved.parse s' with
+        | some (tyName, s'') =>
+          applyPostfix (wm (.AsType base (wm (.UserDefined (mkId tyName))))) s''
+        | none => some (base, s)
+      | none => some (base, s)
+
+private partial def parsePrecClimb (postfixRef : Syntax StmtExprMd) (minPrec : Nat) (s : PState) : Option (StmtExprMd × PState) := do
+  let (lhs, st) ← postfixRef.parse s
+  precLoop postfixRef minPrec lhs st
+where
+  precLoop (postfixRef : Syntax StmtExprMd) (minPrec : Nat) (lhs : StmtExprMd) (st : PState) : Option (StmtExprMd × PState) :=
     match tryParseBinOp st with
     | some (bop, st') =>
       if bop.prec >= minPrec then
         let nextPrec := if bop.rightAssoc then bop.prec else bop.prec + 1
-        match parsePrecClimb nextPrec st' with
+        match parsePrecClimb postfixRef nextPrec st' with
         | some (rhs, st'') =>
-          lhs := wm (.PrimitiveOp bop.op [lhs, rhs])
-          st := st''
-        | none => continue_ := false
-      else continue_ := false
+          precLoop postfixRef minPrec (wm (.PrimitiveOp bop.op [lhs, rhs])) st''
+        | none => some (lhs, st)
+      else some (lhs, st)
     | none =>
-      -- Try assignment: :=
       if minPrec == 0 then
         match (token ":=").parse st with
         | some ((), st') =>
-          match parsePrecClimb 0 st' with
+          match parsePrecClimb postfixRef 0 st' with
           | some (rhs, st'') =>
-            lhs := wm (.Assign [lhs] rhs)
-            st := st''
-          | none => continue_ := false
-        | none => continue_ := false
-      else continue_ := false
-  return (lhs, st)
+            precLoop postfixRef minPrec (wm (.Assign [lhs] rhs)) st''
+          | none => some (lhs, st)
+        | none => some (lhs, st)
+      else some (lhs, st)
 
-private partial def stmtExprPrec0 : Syntax StmtExprMd :=
-  { parse := fun s => parsePrecClimb 0 s
-    print := fun e => printExpr e 0 }
-where
-  opSym (op : Operation) : Option String :=
-    binOps.findSome? fun bop => if operationBEq bop.op op then some bop.sym else none
-  printExpr (e : StmtExprMd) (minPrec : Nat) : Option String :=
-    match e.val with
-    | .PrimitiveOp op [lhs, rhs] =>
-      match opSym op with
-      | some sym => do
-        let l ← printExpr lhs minPrec
-        let r ← printExpr rhs minPrec
-        some s!"{l}{sym}{r}"
-      | none => stmtExprPostfix.print e
-    | .Assign [target] value => do
-      let t ← printExpr target 0
-      let v ← printExpr value 0
-      some s!"{t} := {v}"
-    | _ => stmtExprPostfix.print e
+private partial def printExpr (postfixRef : Syntax StmtExprMd) (e : StmtExprMd) (minPrec : Nat) : Option String :=
+  match e.val with
+  | .PrimitiveOp op [lhs, rhs] =>
+    match opSym op with
+    | some sym => do
+      let l ← printExpr postfixRef lhs minPrec
+      let r ← printExpr postfixRef rhs minPrec
+      some s!"{l}{sym}{r}"
+    | none => postfixRef.print e
+  | .Assign [target] value => do
+    let t ← printExpr postfixRef target 0
+    let v ← printExpr postfixRef value 0
+    some s!"{t} := {v}"
+  | _ => postfixRef.print e
 
+/-! ### Grammar library for mutually recursive expression grammars -/
+
+private partial def mkExprLib (_ : Unit) : GrammarLibrary StmtExprMd :=
+  let lib : Unit → GrammarLibrary StmtExprMd := fun () => mkExprLib ()
+  let atomRef := ref lib "atom"
+  let postfixRef := ref lib "postfix"
+  let prec0Ref := ref lib "prec0"
+  let typeSyn := highTypeSyntax
+  let atomSyntax : Syntax StmtExprMd :=
+    alt (map { apply := fun () => some (wm (.LiteralBool true))
+               unapply := fun e => match e.val with | .LiteralBool true => some () | _ => none }
+          (keyword "true"))
+    (alt (map { apply := fun () => some (wm (.LiteralBool false))
+                unapply := fun e => match e.val with | .LiteralBool false => some () | _ => none }
+           (keyword "false"))
+    (alt (map { apply := fun () => some (wm (.Hole true none))
+                unapply := fun e => match e.val with | .Hole true none => some () | _ => none }
+           (token "<?>"))
+    (alt (map { apply := fun () => some (wm (.Hole false none))
+                unapply := fun e => match e.val with | .Hole false none => some () | _ => none }
+           (token "<??>"))
+    (alt (map { apply := fun ((), inner) => some (wm (.PrimitiveOp .Neg [inner]))
+                unapply := fun e => match e.val with
+                  | .PrimitiveOp .Neg [inner] => some ((), inner) | _ => none }
+           (seq (text "-") atomRef))
+    (alt (map { apply := fun ((), inner) => some (wm (.PrimitiveOp .Not [inner]))
+                unapply := fun e => match e.val with
+                  | .PrimitiveOp .Not [inner] => some ((), inner) | _ => none }
+           (seq (text "!") atomRef))
+    (alt (map { apply := fun ((), v) => some (wm (.Return (some v)))
+                unapply := fun e => match e.val with
+                  | .Return (some v) => some ((), v) | _ => none }
+           (seq (keyword "return") prec0Ref))
+    (alt (map { apply := fun ((), cond) => some (wm (.Assert cond))
+                unapply := fun e => match e.val with
+                  | .Assert cond => some ((), cond) | _ => none }
+           (seq (keyword "assert") prec0Ref))
+    (alt (map { apply := fun ((), cond) => some (wm (.Assume cond))
+                unapply := fun e => match e.val with
+                  | .Assume cond => some ((), cond) | _ => none }
+           (seq (keyword "assume") prec0Ref))
+    (alt (map { apply := fun ((), name) => some (wm (.Exit name))
+                unapply := fun e => match e.val with
+                  | .Exit name => some ((), name) | _ => none }
+           (seq (keyword "exit") ident))
+    (alt (map { apply := fun ((((), name), ((), ty)), init) =>
+                  some (wm (.LocalVariable (mkId name) ty (init.map Prod.snd)))
+                unapply := fun e => match e.val with
+                  | .LocalVariable id ty init =>
+                    some ((((), id.text), ((), ty)), init.map fun v => ((), v))
+                  | _ => none }
+           (seq (seq (seq (keyword "var") identNotReserved)
+                     (seq (token ":") typeSyn))
+                (optional (seq (token ":=") prec0Ref))))
+    (alt (map { apply := fun ((), name) => some (wm (.New (mkId name)))
+                unapply := fun e => match e.val with
+                  | .New id => some ((), id.text) | _ => none }
+           (seq (keyword "new") ident))
+    (alt (map { apply := fun (((((), cond), ((), thenBr)), elseBr)) =>
+                  some (wm (.IfThenElse cond thenBr (elseBr.map Prod.snd)))
+                unapply := fun e => match e.val with
+                  | .IfThenElse cond thenBr elseBr =>
+                    some (((((), cond), ((), thenBr)), elseBr.map fun v => ((), v)))
+                  | _ => none }
+           (seq (seq (seq (keyword "if") prec0Ref)
+                     (seq (keyword "then") prec0Ref))
+                (optional (seq (keyword "else") prec0Ref))))
+    (alt (map { apply := fun (((((), ((), cond)), ()), invs), body) =>
+                  some (wm (.While cond (invs.map Prod.snd) none body))
+                unapply := fun e => match e.val with
+                  | .While cond invs none body =>
+                    some (((((), ((), cond)), ()), invs.map fun v => ((), v)), body)
+                  | _ => none }
+           (seq (seq (seq (seq (keyword "while") (seq (token "(") prec0Ref))
+                          (token ")"))
+                     (many (seq (keyword "invariant") prec0Ref)))
+                prec0Ref))
+    (alt (map { apply := fun ((((((), ((), init)), ((), cond)), ((), step)), ((), invs)), body) =>
+                  let whileBody := wm (.Block [body, step] none)
+                  let whileStmt := wm (.While cond (invs.map Prod.snd) none whileBody)
+                  some (wm (.Block [init, whileStmt] none))
+                unapply := fun _ => none }
+           (seq (seq (seq (seq (seq (keyword "for") (seq (token "(") prec0Ref))
+                               (seq (token ";") prec0Ref))
+                          (seq (token ";") prec0Ref))
+                     (seq (token ")") (many (seq (keyword "invariant") prec0Ref))))
+                prec0Ref))
+    (alt (map { apply := fun ((((((), ((), name)), ((), ty)), ()), trigger), body) =>
+                  some (wm (.Forall { name := mkId name, type := ty } trigger body))
+                unapply := fun e => match e.val with
+                  | .Forall param trigger body =>
+                    some ((((((), ((), param.name.text)), ((), param.type)), ()),
+                      trigger), body)
+                  | _ => none }
+           (seq (seq (seq (seq (seq (keyword "forall") (seq (token "(") identNotReserved))
+                               (seq (token ":") typeSyn))
+                          (token ")"))
+                     (optional (seqRight (token "{") (seqLeft prec0Ref (token "}")))))
+                (seqRight (token "=>") prec0Ref)))
+    (alt (map { apply := fun ((((((), ((), name)), ((), ty)), ()), trigger), body) =>
+                  some (wm (.Exists { name := mkId name, type := ty } trigger body))
+                unapply := fun e => match e.val with
+                  | .Exists param trigger body =>
+                    some ((((((), ((), param.name.text)), ((), param.type)), ()),
+                      trigger), body)
+                  | _ => none }
+           (seq (seq (seq (seq (seq (keyword "exists") (seq (token "(") identNotReserved))
+                               (seq (token ":") typeSyn))
+                          (token ")"))
+                     (optional (seqRight (token "{") (seqLeft prec0Ref (token "}")))))
+                (seqRight (token "=>") prec0Ref)))
+    (alt (alt -- labelled block
+           (map { apply := fun ((((), stmts), ()), label) =>
+                    some (wm (.Block stmts (some label)))
+                  unapply := fun e => match e.val with
+                    | .Block stmts (some label) => some ((((), stmts), ()), label)
+                    | _ => none }
+             (seq (seq (seq (token "{") (sepBy prec0Ref (token ";")))
+                       (token "}"))
+                  identNotReserved))
+           -- unlabelled block
+           (map { apply := fun (((), stmts), ()) =>
+                    some (wm (.Block stmts none))
+                  unapply := fun e => match e.val with
+                    | .Block stmts none => some (((), stmts), ())
+                    | _ => none }
+             (seq (seq (token "{") (sepBy prec0Ref (token ";")))
+                  (token "}"))))
+    (alt (map { apply := fun (((), e), ()) => some e
+                unapply := fun e => some (((), e), ()) }
+           (seq (seq (token "(") prec0Ref) (token ")")))
+    (alt (map { apply := fun ((intPart : Int), (fracPart : Nat)) =>
+                  let fracStr := toString fracPart
+                  let exp : Int := -(fracStr.length : Int)
+                  let mantissa : Int := intPart * (10 ^ fracStr.length : Int) + (fracPart : Int)
+                  some (wm (.LiteralDecimal ⟨mantissa, exp⟩))
+                unapply := fun e => match e.val with
+                  | .LiteralDecimal d =>
+                    if d.exponent < 0 then
+                      let width := (-d.exponent).natAbs
+                      let ne := (10 : Int) ^ width
+                      some (d.mantissa / ne, (d.mantissa % ne).natAbs)
+                    else none
+                  | _ => none }
+           decimal)
+    (alt (map { apply := fun n => some (wm (.LiteralInt n))
+                unapply := fun e => match e.val with
+                  | .LiteralInt n => some n | _ => none }
+           int)
+    (alt (map { apply := fun s => some (wm (.LiteralString s))
+                unapply := fun e => match e.val with
+                  | .LiteralString s => some s | _ => none }
+           stringLit)
+    -- call or identifier (must be last)
+    { parse := fun s => do
+        let (name, s') ← identNotReserved.parse s
+        match (token "(").parse s' with
+        | some ((), s'') =>
+          let (args, s''') ← (sepBy prec0Ref (token ",")).parse s''
+          let ((), s4) ← (token ")").parse s'''
+          return (wm (.StaticCall (mkId name) args), s4)
+        | none =>
+          return (wm (.Identifier (mkId name)), s')
+      print := fun e => match e.val with
+        | .StaticCall callee args => do
+          let argsStr ← args.mapM fun a => prec0Ref.print a
+          some s!"{callee.text}({String.intercalate ", " argsStr})"
+        | .Identifier id => some id.text
+        | _ => none }
+    )))))))))))))))))))))
+  let postfixSyntax : Syntax StmtExprMd :=
+    { parse := fun s => do
+        let (base, s') ← atomRef.parse s
+        applyPostfix base s'
+      print := fun e => match e.val with
+        | .FieldSelect target field => do
+          let tStr ← postfixRef.print target
+          some s!"{tStr}#{field.text}"
+        | .IsType target ty => do
+          let tStr ← postfixRef.print target
+          let tyStr ← typeSyn.print ty
+          some s!"{tStr} is {tyStr}"
+        | .AsType target ty => do
+          let tStr ← postfixRef.print target
+          let tyStr ← typeSyn.print ty
+          some s!"{tStr} as {tyStr}"
+        | _ => atomRef.print e }
+  let prec0Syntax : Syntax StmtExprMd :=
+    { parse := fun s => parsePrecClimb postfixRef 0 s
+      print := fun e => printExpr postfixRef e 0 }
+  GrammarLibrary.empty
+    |>.add "atom" atomSyntax
+    |>.add "postfix" postfixSyntax
+    |>.add "prec0" prec0Syntax
+
+def grammarLibrary : GrammarLibrary StmtExprMd := mkExprLib ()
+
+private def stmtExprPrec0 : Syntax StmtExprMd := ref (fun () => grammarLibrary) "prec0"
 
 /-! ## Procedure syntax -/
 
@@ -547,14 +496,17 @@ private def procedureSyntax (isFunctional : Bool) : Syntax Procedure :=
         some s!"{p.name.text}: {tyStr}"
       let mut result := s!"{kw} {proc.name.text}({String.intercalate ", " paramsStr})"
       -- Return type
-      if proc.outputs.length == 1 && proc.outputs.head!.name.text == "result" then
-        let tyStr ← highTypeSyntax.print proc.outputs.head!.type
-        result := result ++ s!": {tyStr}"
-      else if !proc.outputs.isEmpty then
-        let outStrs ← proc.outputs.mapM fun p => do
-          let tyStr ← highTypeSyntax.print p.type
-          some s!"{p.name.text}: {tyStr}"
-        result := result ++ s!" returns ({String.intercalate ", " outStrs})"
+      match proc.outputs with
+      | [out] =>
+        if out.name.text == "result" then
+          let tyStr ← highTypeSyntax.print out.type
+          result := result ++ s!": {tyStr}"
+      | _ =>
+        if !proc.outputs.isEmpty then
+          let outStrs ← proc.outputs.mapM fun p => do
+            let tyStr ← highTypeSyntax.print p.type
+            some s!"{p.name.text}: {tyStr}"
+          result := result ++ s!" returns ({String.intercalate ", " outStrs})"
       -- Requires
       for req in proc.preconditions do
         let reqStr ← stmtExprPrec0.print req

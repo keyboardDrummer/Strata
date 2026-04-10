@@ -37,6 +37,9 @@ structure Syntax (a : Type) where
   parse : PState → Option (a × PState)
   print : a → Option String
 
+instance : Nonempty (Syntax a) :=
+  ⟨{ parse := fun _ => none, print := fun _ => none }⟩
+
 def pure : Syntax Unit :=
   { parse := fun s => some ((), s)
     print := fun () => some "" }
@@ -277,6 +280,33 @@ def runParse (s : Syntax a) (input : String) : Option a := do
 
 def runPrint (s : Syntax a) (v : a) : Option String :=
   s.print v
+
+/-! ## Grammar Library — named grammars for mutual recursion -/
+
+/-- A grammar library maps names to grammars of a fixed type, enabling mutual recursion
+    by allowing grammars to refer to each other by name. -/
+structure GrammarLibrary (a : Type) where
+  grammars : List (String × Syntax a)
+
+instance : Nonempty (GrammarLibrary a) := ⟨⟨[]⟩⟩
+
+def GrammarLibrary.empty : GrammarLibrary a := ⟨[]⟩
+
+def GrammarLibrary.add (lib : GrammarLibrary a) (name : String) (s : Syntax a) : GrammarLibrary a :=
+  ⟨lib.grammars ++ [(name, s)]⟩
+
+def GrammarLibrary.get (lib : GrammarLibrary a) (name : String) : Option (Syntax a) :=
+  lib.grammars.lookup name
+
+/-- A reference to a named grammar in a library. The library is provided as a thunk
+    to allow the library to be built up before any grammar is evaluated. -/
+def ref (getLib : Unit → GrammarLibrary a) (name : String) : Syntax a :=
+  { parse := fun s => do
+      let syn ← (getLib ()).get name
+      syn.parse s
+    print := fun v => do
+      let syn ← (getLib ()).get name
+      syn.print v }
 
 end
 end Strata.Syntax
