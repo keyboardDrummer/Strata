@@ -5,7 +5,7 @@
 -/
 
 module
-public import Strata.Languages.Laurel.FunctionsAndProofs
+public import Strata.Languages.Laurel.TransparencyPass
 import Strata.DL.Lambda.LExpr
 import Strata.DDM.Util.Graph.Tarjan
 import Strata.Languages.Laurel.Grammar.AbstractToConcreteTreeTranslator
@@ -112,10 +112,10 @@ unrelated procedures without them — by stably partitioning them first before b
 the graph. Tarjan then naturally assigns them lower indices, causing them to appear
 earlier in the output.
 -/
-public def computeSccDecls (program : FunctionsAndProofsProgram) : List (List Procedure × Bool) :=
+public def computeSccDecls (program : UnorderedCoreWithLaurelTypes) : List (List Procedure × Bool) :=
   -- Stable partition: procedures with axioms come first, preserving relative
   -- order within each group. Tarjan then places them earlier in the topological output.
-  let allProcs := program.functions ++ program.proofs
+  let allProcs := program.functions ++ program.coreProcedures.map Prod.fst
   let (withAxioms, withoutAxioms) :=
     allProcs.partition (fun p => !p.axioms.isEmpty)
   let orderedProcs : List Procedure := withAxioms ++ withoutAxioms
@@ -184,7 +184,7 @@ public inductive OrderedDecl where
 /--
 A program whose declarations have been grouped and topologically ordered,
 using Laurel types. Produced by `orderFunctionsAndProofs` from a
-`FunctionsAndProofsProgram`.
+`UnorderedCoreWithLaurelTypes`.
 -/
 public structure CoreWithLaurelTypes where
   decls : List OrderedDecl
@@ -211,7 +211,7 @@ instance : ToFormat CoreWithLaurelTypes where
 end -- public section
 
 /--
-Produce a `CoreWithLaurelTypes` from a `FunctionsAndProofsProgram` by
+Produce a `CoreWithLaurelTypes` from a `UnorderedCoreWithLaurelTypes` by
 computing a combined ordering of functions and proofs using the call graph,
 then collecting datatypes and constants.
 
@@ -219,7 +219,7 @@ Functions are grouped into SCCs (for mutual recursion). Proofs are emitted
 as individual `procedure` decls. Both participate in the topological ordering
 so that axioms are available to functions that need them.
 -/
-public def orderFunctionsAndProofs (program : FunctionsAndProofsProgram) : CoreWithLaurelTypes :=
+public def orderFunctionsAndProofs (program : UnorderedCoreWithLaurelTypes) : CoreWithLaurelTypes :=
   let datatypeDecls := (groupDatatypesByScc' program).map OrderedDecl.datatypes
   let constantDecls := program.constants.map OrderedDecl.constant
   let funcNames : Std.HashSet String :=
@@ -232,8 +232,8 @@ public def orderFunctionsAndProofs (program : FunctionsAndProofsProgram) : CoreW
     funcDecl ++ proofDecls
   { decls := datatypeDecls ++ constantDecls ++ orderedDecls }
 where
-  /-- Group datatypes from a FunctionsAndProofsProgram by SCC. -/
-  groupDatatypesByScc' (program : FunctionsAndProofsProgram) : List (List DatatypeDefinition) :=
+  /-- Group datatypes from a UnorderedCoreWithLaurelTypes by SCC. -/
+  groupDatatypesByScc' (program : UnorderedCoreWithLaurelTypes) : List (List DatatypeDefinition) :=
     let laurelDatatypes := program.datatypes
     let n := laurelDatatypes.length
     if n == 0 then [] else

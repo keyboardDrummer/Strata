@@ -6,7 +6,7 @@
 module
 
 public import Strata.Languages.Laurel.MapStmtExpr
-public import Strata.Languages.Laurel.FunctionsAndProofs
+public import Strata.Languages.Laurel.TransparencyPass
 import Strata.Util.Tactics
 
 /-!
@@ -69,7 +69,7 @@ private def inlineLocalsNode (expr : StmtExprMd) : StmtExprMd :=
   | _ => expr
 
 /-- Apply local-variable inlining to all functional procedure bodies. -/
-def inlineLocalVariablesInExpressions (program : FunctionsAndProofsProgram) : FunctionsAndProofsProgram :=
+def inlineLocalVariablesInExpressions (program : UnorderedCoreWithLaurelTypes) : UnorderedCoreWithLaurelTypes :=
   { program with functions := program.functions.map fun proc =>
       match proc.body with
       | .Transparent body =>

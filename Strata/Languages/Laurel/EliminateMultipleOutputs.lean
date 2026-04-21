@@ -5,7 +5,7 @@
 -/
 module
 
-public import Strata.Languages.Laurel.FunctionsAndProofs
+public import Strata.Languages.Laurel.TransparencyPass
 
 /-!
 # Eliminate Multiple Outputs
@@ -14,7 +14,7 @@ Transforms bodiless functions with multiple outputs into functions that return
 a single synthesized result datatype. Call sites are rewritten to destructure
 the result using the generated accessors.
 
-This pass operates on `FunctionsAndProofsProgram → FunctionsAndProofsProgram`.
+This pass operates on `UnorderedCoreWithLaurelTypes → UnorderedCoreWithLaurelTypes`.
 -/
 
 namespace Strata.Laurel
@@ -160,9 +160,9 @@ private def rewriteProcedure (infoMap : Std.HashMap String MultiOutInfo)
     { proc with body := .Opaque posts (some rewritten) mods }
   | _ => proc
 
-/-- Eliminate multiple outputs from a FunctionsAndProofsProgram. -/
-def eliminateMultipleOutputs (program : FunctionsAndProofsProgram)
-    : FunctionsAndProofsProgram :=
+/-- Eliminate multiple outputs from a UnorderedCoreWithLaurelTypes. -/
+def eliminateMultipleOutputs (program : UnorderedCoreWithLaurelTypes)
+    : UnorderedCoreWithLaurelTypes :=
   let infos := collectMultiOutFunctions program.functions
   if infos.isEmpty then program else
   let infoMap : Std.HashMap String MultiOutInfo :=
@@ -172,10 +172,10 @@ def eliminateMultipleOutputs (program : FunctionsAndProofsProgram)
     match infoMap.get? f.name.text with
     | some info => rewriteProcedure infoMap (transformFunction info f)
     | none => rewriteProcedure infoMap f
-  let proofs := program.proofs.map (rewriteProcedure infoMap)
+  let coreProcedures := program.coreProcedures.map fun (p, post) => (rewriteProcedure infoMap p, post)
   { program with
     functions := functions
-    proofs := proofs
+    coreProcedures := coreProcedures
     datatypes := program.datatypes ++ newDatatypes }
 
 end -- public section

@@ -26,7 +26,7 @@ to Strata Core. The pipeline is:
 2. Run a sequence of Laurel-to-Laurel lowering passes (resolution, heap
    parameterization, type hierarchy, modifies clauses, hole inference,
    desugaring, lifting, constrained type elimination, contract pass).
-3. Run the proof pass to produce a `FunctionsAndProofsProgram`.
+3. Run the transparency pass to produce an `UnorderedCoreWithLaurelTypes`.
 4. Group and order declarations into a `CoreWithLaurelTypes`.
 5. Translate the `CoreWithLaurelTypes` to a `Core.Program`.
 -/
@@ -148,14 +148,15 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
     (keepAllFilesPrefix : Option String := none)
     : IO TranslateResultWithLaurel := do
   let (program, model, passDiags) ← runLaurelPasses options program keepAllFilesPrefix
-  let functionsAndProofs := laurelToFunctionsAndProofs program
-  let functionsAndProofs := eliminateMultipleOutputs functionsAndProofs
-  let functionsAndProofs := inlineLocalVariablesInExpressions functionsAndProofs
+  let unorderedCore := transparencyPass program
+  let unorderedCore := eliminateMultipleOutputs unorderedCore
+  let unorderedCore := inlineLocalVariablesInExpressions unorderedCore
 
+  let coreProceduresList := unorderedCore.coreProcedures.map Prod.fst
   let fnProgram : Program := {
-    staticProcedures := functionsAndProofs.functions ++ functionsAndProofs.proofs,
+    staticProcedures := unorderedCore.functions ++ coreProceduresList,
     staticFields := [],
-    types := functionsAndProofs.datatypes.map TypeDefinition.Datatype ++
+    types := unorderedCore.datatypes.map TypeDefinition.Datatype ++
     -- Hack to compensate for references to composite types not having been updated yet.
       program.types.filter (fun t => match t with | .Composite _ => true | _ => false),
     constants := program.constants
@@ -163,19 +164,24 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
   let fnResolveResult := resolve fnProgram (some model)
   let fnModel := fnResolveResult.model
 
-  -- Reconstruct FunctionsAndProofsProgram from the resolved fnProgram so that
+  -- Reconstruct UnorderedCoreWithLaurelTypes from the resolved fnProgram so that
   -- identifiers introduced by eliminateMultipleOutputs have their uniqueId set.
   let resolvedProcs := fnResolveResult.program.staticProcedures
   let resolvedDatatypes := fnResolveResult.program.types.filterMap fun td =>
     match td with | .Datatype dt => some dt | _ => none
-  let functionsAndProofs : FunctionsAndProofsProgram := {
+  -- Build a map from procedure name to its free postcondition
+  let postMap : Std.HashMap String StmtExprMd :=
+    unorderedCore.coreProcedures.foldl (fun m (p, post) => m.insert p.name.text post) {}
+  let defaultPost : StmtExprMd := { val := .LiteralBool true, source := none }
+  let unorderedCore : UnorderedCoreWithLaurelTypes := {
     functions := resolvedProcs.filter (·.isFunctional)
-    proofs := resolvedProcs.filter (!·.isFunctional)
+    coreProcedures := (resolvedProcs.filter (!·.isFunctional)).map fun p =>
+      (p, postMap.getD p.name.text defaultPost)
     datatypes := resolvedDatatypes
     constants := fnResolveResult.program.constants
   }
 
-  let coreWithLaurelTypes := orderFunctionsAndProofs functionsAndProofs
+  let coreWithLaurelTypes := orderFunctionsAndProofs unorderedCore
   if ! passDiags.isEmpty then
     return (none, passDiags, program)
   else
