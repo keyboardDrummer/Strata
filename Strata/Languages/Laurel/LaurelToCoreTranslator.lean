@@ -112,7 +112,7 @@ def translateType (ty : HighTypeMd) : TranslateM LMonoTy := do
   | .TBool => return LMonoTy.bool
   | .TString => return LMonoTy.string
   | .TBv n => return LMonoTy.bitvec n
-  | .TVoid => return .tcons "errorVoid" []
+  | .TVoid => return LMonoTy.bool -- Using bool as placeholder for void
   | .THeap => return .tcons "Heap" []
   | .TTypedField _ => return .tcons "Field" []
   | .TSet elementType => return Core.mapTy (← translateType elementType) LMonoTy.bool
@@ -124,7 +124,7 @@ def translateType (ty : HighTypeMd) : TranslateM LMonoTy := do
     | some (.datatypeConstructor typeName _) => return .tcons typeName.text []
     | _ => do -- resolution should have already emitted a diagnostic
       modify fun s => { s with coreProgramHasSuperfluousErrors := true }
-      return .tcons "errorUserDefined" []
+      return .tcons "Composite" []
   | .TCore s => return .tcons s []
   | .TReal => return LMonoTy.real
   | .Unknown => throwTypeDiagnostic ty "could not infer type"
@@ -344,7 +344,7 @@ def translateExpr (expr : StmtExprMd)
     all_goals (have := AstNode.sizeOf_val_lt expr; term_by_mem)
 
 def getNameFromMd (md : Imperative.MetaData Core.Expression): String :=
-  let fileRange := (Imperative.getFileRange md).getD (dbg_trace "BUG: metadata without a filerange"; default)
+  let fileRange := (Imperative.getFileRange md).getD default
   s!"({fileRange.range.start})"
 
 def defaultExprForType (ty : HighTypeMd) : TranslateM Core.Expression.Expr := do
