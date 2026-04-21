@@ -77,11 +77,11 @@ private def isAssume (stmt : StmtExprMd) : Bool :=
 private def rewriteAssign (infoMap : Std.HashMap String MultiOutInfo)
     (targets : List StmtExprMd) (callee : Identifier) (args : List StmtExprMd)
     (callSrc : Option FileRange) (callMd : MetaData)
-    (following : List StmtExprMd) : Option (List StmtExprMd × Nat) :=
+    (following : List StmtExprMd) (counter : Nat) : Option (List StmtExprMd × Nat) :=
   match infoMap.get? callee.text with
   | some info =>
-    if targets.length == info.outputs.length then
-      let tempName := s!"${callee.text}$temp"
+    if targets.length ≤ info.outputs.length then
+      let tempName := s!"${callee.text}$temp{counter}"
       let tempParam : Parameter := { name := mkId tempName, type := mkTy (.UserDefined (mkId info.resultTypeName)) }
       let tempDecl := mkMd (.LocalVariable [tempParam]
         (some ⟨.StaticCall callee args, callSrc, callMd⟩))
@@ -104,20 +104,20 @@ private def rewriteAssign (infoMap : Std.HashMap String MultiOutInfo)
     assignments so they reference pre-call variable values. -/
 private def rewriteStmts (infoMap : Std.HashMap String MultiOutInfo)
     (stmts : List StmtExprMd) : List StmtExprMd :=
-  let rec go (remaining : List StmtExprMd) (acc : List StmtExprMd) : List StmtExprMd :=
+  let rec go (remaining : List StmtExprMd) (acc : List StmtExprMd) (counter : Nat) : List StmtExprMd :=
     match remaining with
     | [] => acc.reverse
     | stmt :: rest =>
       match stmt.val with
       | .Assign targets ⟨.StaticCall callee args, callSrc, callMd⟩ =>
-        match rewriteAssign infoMap targets callee args callSrc callMd rest with
-        | some (expanded, consumed) => go (rest.drop consumed) (expanded.reverse ++ acc)
-        | none => go rest (stmt :: acc)
+        match rewriteAssign infoMap targets callee args callSrc callMd rest counter with
+        | some (expanded, consumed) => go (rest.drop consumed) (expanded.reverse ++ acc) (counter + 1)
+        | none => go rest (stmt :: acc) counter
       | .LocalVariable params (some ⟨.StaticCall callee args, callSrc, callMd⟩) =>
         match infoMap.get? callee.text with
         | some info =>
           if info.outputs.length > 1 then
-            let tempName := s!"${callee.text}$temp"
+            let tempName := s!"${callee.text}$temp{counter}"
             let tempParam : Parameter := { name := mkId tempName, type := mkTy (.UserDefined (mkId info.resultTypeName)) }
             let tempDecl := mkMd (.LocalVariable [tempParam]
               (some ⟨.StaticCall callee args, callSrc, callMd⟩))
@@ -130,12 +130,12 @@ private def rewriteStmts (infoMap : Std.HashMap String MultiOutInfo)
               mkMd (.LocalVariable [p]
                 (some (mkMd (.StaticCall (mkId (destructorName info i))
                   [mkMd (.Identifier (mkId tempName))]))))
-            go (rest.drop consumed) ((assumes ++ localDecls).reverse ++ (tempDecl :: acc))
-          else go rest (stmt :: acc)
-        | none => go rest (stmt :: acc)
-      | _ => go rest (stmt :: acc)
+            go (rest.drop consumed) ((assumes ++ localDecls).reverse ++ (tempDecl :: acc)) (counter + 1)
+          else go rest (stmt :: acc) counter
+        | none => go rest (stmt :: acc) counter
+      | _ => go rest (stmt :: acc) counter
   termination_by remaining.length
-  go stmts []
+  go stmts [] 0
 
 /-- Rewrite blocks in a StmtExprMd tree to handle multi-output calls. -/
 private def rewriteExpr (infoMap : Std.HashMap String MultiOutInfo)
