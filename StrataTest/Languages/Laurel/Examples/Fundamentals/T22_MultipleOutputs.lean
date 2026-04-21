@@ -25,10 +25,9 @@ function twoOutputs(x: int)
 
 procedure testMultiOut() {
   var a: int;
-  var b: int;
-  a, b := twoOutputs(5);
+  a := twoOutputs(5);
   assert a > 0
-//^^^^^^^^^^ error: assertion could not be proved
+//^^^^^^^^^^^^ error: assertion does not hold
 };
 "
 

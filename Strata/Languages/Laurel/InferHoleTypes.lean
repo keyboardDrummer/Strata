@@ -117,10 +117,9 @@ private def inferExpr (expr : StmtExprMd) (expectedType : HighTypeMd) : InferHol
         | target :: _ => computeExprType model target
         | _ => defaultHoleType
       return ⟨.Assign targets (← inferExpr value targetType), source, md⟩
-  | .LocalVariable params init =>
-      let ty := match params with | p :: _ => p.type | [] => defaultHoleType
+  | .LocalVariable name ty init =>
       match init with
-      | some initExpr => return ⟨.LocalVariable params (some (← inferExpr initExpr ty)), source, md⟩
+      | some initExpr => return ⟨.LocalVariable name ty (some (← inferExpr initExpr ty)), source, md⟩
       | none => return expr
   | .While cond invs dec body =>
       let dec' ← match dec with

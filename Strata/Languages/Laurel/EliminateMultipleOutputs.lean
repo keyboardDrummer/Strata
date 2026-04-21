@@ -72,35 +72,32 @@ private def rewriteStmts (infoMap : Std.HashMap String MultiOutInfo)
       | .Assign targets ⟨.StaticCall callee args, callSrc, callMd⟩ =>
         match infoMap.get? callee.text with
         | some info =>
-          if targets.length == info.outputs.length then
-            let tempName := s!"${callee.text}$temp"
-            let tempParam : Parameter := { name := mkId tempName, type := mkTy (.UserDefined (mkId info.resultTypeName)) }
-            let tempDecl := mkMd (.LocalVariable [tempParam]
-              (some ⟨.StaticCall callee args, callSrc, callMd⟩))
-            let assigns := targets.zipIdx.map fun (tgt, i) =>
-              mkMd (.Assign [tgt]
-                (mkMd (.StaticCall (mkId (destructorName info i))
-                  [mkMd (.Identifier (mkId tempName))])))
-            go rest (assigns.reverse ++ (tempDecl :: acc))
-          else go rest (stmt :: acc)
+          let tempName := mkId s!"${callee.text}$temp"
+          let tempTy := mkTy (.UserDefined (mkId info.resultTypeName))
+          let tempDecl := mkMd (.LocalVariable tempName tempTy
+            (some ⟨.StaticCall callee args, callSrc, callMd⟩))
+          let assigns := targets.zipIdx.map fun (tgt, i) =>
+            mkMd (.Assign [tgt]
+              (mkMd (.StaticCall (mkId (destructorName info i))
+                [mkMd (.Identifier tempName)])))
+          go rest (assigns.reverse ++ (tempDecl :: acc))
         | none => go rest (stmt :: acc)
-      | .LocalVariable params (some ⟨.StaticCall callee args, callSrc, callMd⟩) =>
+      | .LocalVariable name _ty (some ⟨.StaticCall callee args, callSrc, callMd⟩) =>
         match infoMap.get? callee.text with
         | some info =>
-          if info.outputs.length > 1 then
-            let tempName := s!"${callee.text}$temp"
-            let tempParam : Parameter := { name := mkId tempName, type := mkTy (.UserDefined (mkId info.resultTypeName)) }
-            let tempDecl := mkMd (.LocalVariable [tempParam]
+          match info.outputs with
+          | firstOut :: _ =>
+            let tempName := mkId s!"${callee.text}$temp"
+            let tempTy := mkTy (.UserDefined (mkId info.resultTypeName))
+            let tempDecl := mkMd (.LocalVariable tempName tempTy
               (some ⟨.StaticCall callee args, callSrc, callMd⟩))
-            let localDecls := params.zipIdx.map fun (p, i) =>
-              mkMd (.LocalVariable [p]
-                (some (mkMd (.StaticCall (mkId (destructorName info i))
-                  [mkMd (.Identifier (mkId tempName))]))))
-            go rest (localDecls.reverse ++ (tempDecl :: acc))
-          else go rest (stmt :: acc)
+            let localDecl := mkMd (.LocalVariable name firstOut.type
+              (some (mkMd (.StaticCall (mkId (destructorName info 0))
+                [mkMd (.Identifier tempName)]))))
+            go rest (localDecl :: tempDecl :: acc)
+          | [] => go rest (stmt :: acc)
         | none => go rest (stmt :: acc)
       | _ => go rest (stmt :: acc)
-  termination_by remaining.length
   go stmts []
 
 /-- Rewrite blocks in a StmtExprMd tree to handle multi-output calls. -/
