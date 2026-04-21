@@ -56,6 +56,18 @@ def stripAssertAssume (expr : StmtExprMd) : StmtExprMd :=
       | _ => ⟨.Block stmts' label, e.source, e.md⟩
     | _ => e) expr
 
+/-- Rewrite StaticCall callees to their `$asFunction` versions,
+    but only for procedures whose names appear in `nonExternalNames`. -/
+private def rewriteCallsToFunctional (nonExternalNames : List String) (expr : StmtExprMd) : StmtExprMd :=
+  mapStmtExpr (fun e =>
+    match e.val with
+    | .StaticCall callee args =>
+      if nonExternalNames.contains callee.text then
+        let funcCallee := { callee with text := callee.text ++ "$asFunction", uniqueId := none }
+        ⟨.StaticCall funcCallee args, e.source, e.md⟩
+      else e
+    | _ => e) expr
+
 /-- Build a free postcondition equating the procedure's output to its functional version.
     For a procedure `foo(a, b) returns (r)`, produces:
       `r == foo$asFunction(a, b)` -/
@@ -70,10 +82,10 @@ private def mkFreePostcondition (proc : Procedure) : StmtExprMd :=
 /-- Create the function copy of a procedure (suffixed `$asFunction`).
     If the procedure is transparent, include a functional body.
     Otherwise the function is opaque. -/
-private def mkFunctionCopy (proc : Procedure) : Procedure :=
+private def mkFunctionCopy (nonExternalNames : List String) (proc : Procedure) : Procedure :=
   let funcName := { proc.name with text := proc.name.text ++ "$asFunction", uniqueId := none }
   let body := match proc.body with
-    | .Transparent b => .Transparent (stripAssertAssume b)
+    | .Transparent b => .Transparent (rewriteCallsToFunctional nonExternalNames (stripAssertAssume b))
     | .Opaque _ _ _ => .Opaque [] none []
     | x => x
   { proc with name := funcName, isFunctional := true, body := body }
@@ -94,6 +106,7 @@ For each procedure:
 -/
 def transparencyPass (program : Program) : UnorderedCoreWithLaurelTypes :=
   let nonExternal := program.staticProcedures.filter (fun p => !p.body.isExternal)
+  let nonExternalNames := nonExternal.map (fun p => p.name.text)
   -- Original-named function copies (as in the old code) for all procedures
   let originalFunctions := program.staticProcedures.map fun proc =>
     let body := match proc.body with
@@ -102,10 +115,10 @@ def transparencyPass (program : Program) : UnorderedCoreWithLaurelTypes :=
       | x => x
     { proc with isFunctional := true, body := body }
   -- Additional $asFunction copies for non-external procedures
-  let asFunctions := nonExternal.map mkFunctionCopy
+  let asFunctions := nonExternal.map (mkFunctionCopy nonExternalNames)
   let functions := originalFunctions ++ asFunctions
   let coreProcedures := nonExternal.map fun p =>
-    let funcCopy := mkFunctionCopy p
+    let funcCopy := mkFunctionCopy nonExternalNames p
     let freePostcondition :=
       if functionHasBody funcCopy then mkFreePostcondition p
       else mkMd (.LiteralBool true)

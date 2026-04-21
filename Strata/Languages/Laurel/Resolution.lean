@@ -189,8 +189,11 @@ def defineName (iden : Identifier) (node : ResolvedNode) (overrideResolutionName
   let (name', uniqueId) ← match iden.uniqueId with
     | some uid => pure (iden, uid)
     | none =>
-      let id ← freshId
-      pure ({ iden with uniqueId := some (id) }, id)
+      match (← get).scope.get? resolutionName with
+      | some (existingId, _) => pure ({ iden with uniqueId := some existingId }, existingId)
+      | none =>
+        let id ← freshId
+        pure ({ iden with uniqueId := some (id) }, id)
 
   modify fun s => { s with scope := s.scope.insert resolutionName (uniqueId, node),
                            currentScopeNames := s.currentScopeNames.insert resolutionName }
