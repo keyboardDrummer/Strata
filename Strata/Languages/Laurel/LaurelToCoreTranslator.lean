@@ -344,8 +344,9 @@ def translateExpr (expr : StmtExprMd)
     all_goals (have := AstNode.sizeOf_val_lt expr; term_by_mem)
 
 def getNameFromMd (md : Imperative.MetaData Core.Expression): String :=
-  let fileRange := (Imperative.getFileRange md).getD default
-  s!"({fileRange.range.start})"
+  match Imperative.getFileRange md with
+  | some fileRange => s!"({fileRange.range.start})"
+  | none => "(generated)"
 
 def defaultExprForType (ty : HighTypeMd) : TranslateM Core.Expression.Expr := do
   match ty.val with
