@@ -9,6 +9,7 @@ public import Strata.Languages.Laurel.LaurelToCoreTranslator
 import Strata.Languages.Laurel.DesugarShortCircuit
 import Strata.Languages.Laurel.EliminateReturnsInExpression
 import Strata.Languages.Laurel.EliminateValueReturns
+import Strata.Languages.Laurel.EliminateMultipleOutputs
 import Strata.Languages.Laurel.ConstrainedTypeElim
 import Strata.Languages.Core.Verifier
 
@@ -109,6 +110,11 @@ private def runLaurelPasses (options : LaurelTranslateOptions) (program : Progra
   let result := resolve program (some model)
   let (program, model) := (result.program, result.model)
   emit "ConstrainedTypeElim" program
+
+  let program := eliminateMultipleOutputs program
+  let result := resolve program (some model)
+  let (program, model) := (result.program, result.model)
+  emit "EliminateMultipleOutputs" program
 
   let allDiags := resolutionErrors ++ diamondErrors ++ nonCompositeDiags ++
     valueReturnDiags.toList ++ modifiesDiags ++ constrainedTypeDiags
