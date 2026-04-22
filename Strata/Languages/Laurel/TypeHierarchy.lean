@@ -134,9 +134,18 @@ def validateDiamondFieldAccessesForStmtExpr (model : SemanticModel)
     targetErrors ++ fieldError
   | .Block stmts _ =>
     stmts.flatMap (fun s => validateDiamondFieldAccessesForStmtExpr model s)
-  | .Assign targets value =>
-    let targetErrors := targets.attach.foldl (fun acc ⟨t, _⟩ => acc ++ validateDiamondFieldAccessesForStmtExpr model t) []
-    targetErrors ++ validateDiamondFieldAccessesForStmtExpr model value
+  | .Assign _targets value =>
+    validateDiamondFieldAccessesForStmtExpr model value
+  | .FieldAssign target member value =>
+    let targetErrors := validateDiamondFieldAccessesForStmtExpr model target
+    let fieldError := match (computeExprType model target).val with
+      | .UserDefined typeName =>
+        if isDiamondInheritedField model typeName member then
+          let fileRange := (Imperative.getFileRange member.md).getD (expr.source.getD FileRange.unknown)
+          [DiagnosticModel.withRange fileRange s!"fields that are inherited multiple times can not be accessed."]
+        else []
+      | _ => []
+    targetErrors ++ fieldError ++ validateDiamondFieldAccessesForStmtExpr model value
   | .IfThenElse c t e =>
     let errs := validateDiamondFieldAccessesForStmtExpr model c ++
                 validateDiamondFieldAccessesForStmtExpr model t
@@ -216,7 +225,7 @@ def lowerNew (name : Identifier) (source : Option FileRange) (md : Imperative.Me
   let getCounter := mkMd (.StaticCall "Heap..nextReference!" [mkMd (.Identifier heapVar)])
   let saveCounter := mkMd (.LocalVariable freshVar ⟨.TInt, none, #[]⟩ (some getCounter))
   let newHeap := mkMd (.StaticCall "increment" [mkMd (.Identifier heapVar)])
-  let updateHeap := mkMd (.Assign [mkMd (.Identifier heapVar)] newHeap)
+  let updateHeap := mkMd (.Assign [⟨heapVar, none, #[]⟩] newHeap)
   let compositeResult := mkMd (.StaticCall "MkComposite" [mkMd (.Identifier freshVar), mkMd (.StaticCall (name.text ++ "_TypeTag") [])])
   return ⟨ .Block [saveCounter, updateHeap, compositeResult] none, source, md ⟩
 

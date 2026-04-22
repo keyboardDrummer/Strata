@@ -267,6 +267,8 @@ def translateExpr (expr : StmtExprMd)
       return .eq () re1 re2
   | .Assign _ _ =>
       disallowed md "destructive assignments are not supported in functions or contracts"
+  | .FieldAssign _ _ _ =>
+      disallowed md "field assignments are not supported in functions or contracts"
   | .While _ _ _ _ =>
       disallowed md "loops are not supported in functions or contracts"
   | .Exit _ => disallowed md "exit is not supported in expression position"
@@ -403,7 +405,7 @@ def translateStmt (stmt : StmtExprMd)
           return [Core.Statement.init ident coreType .nondet md]
   | .Assign targets value =>
       match targets with
-      | [⟨ .Identifier targetId, _, _ ⟩] =>
+      | [⟨ targetId, _, _ ⟩] =>
           let ident := ⟨targetId.text, ()⟩
           -- Check if RHS is a procedure call (not a function)
           match value.val with
@@ -442,21 +444,19 @@ def translateStmt (stmt : StmtExprMd)
           match value.val with
           | .StaticCall callee args =>
               let coreArgs ← args.mapM (fun a => translateExpr a)
-              let lhsIdents := targets.filterMap fun t =>
-                match t.val with
-                | .Identifier name => some (⟨name.text, ()⟩)
-                | _ => none
+              let lhsIdents := targets.map fun t => ⟨t.val.text, ()⟩
               return [Core.Statement.call lhsIdents callee.text coreArgs (astNodeToCoreMd value)]
           | .InstanceCall .. =>
               -- Instance method call: havoc all target variables
-              let havocStmts := targets.filterMap fun t =>
-                match t.val with
-                | .Identifier name => some (Core.Statement.havoc ⟨name.text, ()⟩ md)
-                | _ => none
-              return (havocStmts)
+              let havocStmts := targets.map fun t =>
+                Core.Statement.havoc ⟨t.val.text, ()⟩ md
+              return havocStmts
           | _ =>
               emitDiagnostic $ md.toDiagnostic "Assignments with multiple target but without a RHS call should not be constructed"
               returnNone
+  | .FieldAssign _ _ _ =>
+      emitDiagnostic $ md.toDiagnostic "FieldAssign should have been eliminated by heap parameterization" DiagnosticType.StrataBug
+      returnNone
   | .IfThenElse cond thenBranch elseBranch =>
       let bcond ← translateExpr cond
       let bthen ← translateStmt thenBranch

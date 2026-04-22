@@ -258,9 +258,11 @@ inductive StmtExpr : Type where
   | LiteralDecimal (value : Decimal)
   /-- A variable reference by name. -/
   | Identifier (name : Identifier)
-  /-- Assignment to one or more targets. Multiple targets are only allowed when the value is a `StaticCall` to a procedure with multiple outputs. -/
-  | Assign (targets : List (AstNode StmtExpr)) (value : AstNode StmtExpr)
-  /-- Read a field from a target expression. Combined with `Assign` for field writes. -/
+  /-- Assignment to one or more local variable targets. Multiple targets are only allowed when the value is a `StaticCall` to a procedure with multiple outputs. -/
+  | Assign (targets : List (AstNode Identifier)) (value : AstNode StmtExpr)
+  /-- Assignment to a field on a target expression. -/
+  | FieldAssign (target : AstNode StmtExpr) (member : Identifier) (value : AstNode StmtExpr)
+  /-- Read a field from a target expression. -/
   | FieldSelect (target : AstNode StmtExpr) (fieldName : Identifier)
   /-- Update a field on a pure (value) type, producing a new value. -/
   | PureFieldUpdate (target : AstNode StmtExpr) (fieldName : Identifier) (newValue : AstNode StmtExpr)

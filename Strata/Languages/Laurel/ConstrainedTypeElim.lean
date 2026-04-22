@@ -137,15 +137,14 @@ def elimStmt (ptMap : ConstrainedTypeMap)
       | some _ => (init, callOpt.toList.map fun c => ⟨.Assert c, source, md⟩)
     pure ([⟨.LocalVariable name ty init', source, md⟩] ++ check)
 
-  | .Assign [target] _ => match target.val with
-    | .Identifier name => do
-      match (← get).get? name.text with
-      | some ty =>
-        let assert := (constraintCallFor ptMap ty name md (src := source)).toList.map
-          fun c => ⟨.Assert c, source, md⟩
-        pure ([stmt] ++ assert)
-      | none => pure [stmt]
-    | _ => pure [stmt]
+  | .Assign [target] _ => do
+    let name := target.val
+    match (← get).get? name.text with
+    | some ty =>
+      let assert := (constraintCallFor ptMap ty name md (src := source)).toList.map
+        fun c => ⟨.Assert c, source, md⟩
+      pure ([stmt] ++ assert)
+    | none => pure [stmt]
 
   | .Block stmts sep =>
     let stmtss ← inScope (stmts.mapM (elimStmt ptMap))

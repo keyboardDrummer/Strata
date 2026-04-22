@@ -163,6 +163,7 @@ def containsAssignmentOrImperativeCall (model: SemanticModel) (expr : StmtExprMd
   | AstNode.mk val _ _ =>
   match val with
   | .Assign .. => true
+  | .FieldAssign .. => true
   | .StaticCall name args1 =>
     (match model.get name with
     | .staticProcedure proc => !proc.isFunctional
@@ -201,20 +202,18 @@ Shared logic for lifting an assignment in expression position:
 prepends the assignment, creates before-snapshots for all targets,
 and updates substitutions. The value should already be transformed by the caller.
 -/
-private def liftAssignExpr (targets : List StmtExprMd) (seqValue : StmtExprMd)
+private def liftAssignExpr (targets : List (AstNode Identifier)) (seqValue : StmtExprMd)
     (source : Option FileRange) (md : Imperative.MetaData Core.Expression) : LiftM Unit := do
   -- Prepend the assignment itself
   prepend (⟨.Assign targets seqValue, source, md⟩)
   -- Create a before-snapshot for each target and update substitutions
   for target in targets do
-    match target.val with
-    | .Identifier varName =>
-        let snapshotName ← freshTempFor varName
-        let varType ← computeType target
-        -- Snapshot goes before the assignment (cons pushes to front)
-        prepend (⟨.LocalVariable snapshotName varType (some (⟨.Identifier varName, source, md⟩)), source, md⟩)
-        setSubst varName snapshotName
-    | _ => pure ()
+    let varName := target.val
+    let snapshotName ← freshTempFor varName
+    let varType ← computeType (⟨.Identifier varName, target.source, target.md⟩)
+    -- Snapshot goes before the assignment (cons pushes to front)
+    prepend (⟨.LocalVariable snapshotName varType (some (⟨.Identifier varName, source, md⟩)), source, md⟩)
+    setSubst varName snapshotName
 
 mutual
 /--
@@ -243,11 +242,7 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         | head :: _ => pure head
         | _ => return expr
 
-      let resultExpr ← match firstTarget.val with
-        | .Identifier varName => pure (⟨.Identifier (← getSubst varName), source, md⟩)
-        | _ =>
-          dbg_trace "Strata bug: non-identifier targets should have been removed before the lift expression phase";
-          return expr
+      let resultExpr := ⟨.Identifier (← getSubst firstTarget.val), source, md⟩
 
       -- Use the original value (not seqValue) for the prepended assignment,
       -- because prepended statements execute in program order and don't need substitutions.
@@ -272,7 +267,7 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       let callResultType ← computeType expr
       let liftedCall := [
         ⟨ (.LocalVariable callResultVar callResultType none), source, md ⟩,
-        ⟨.Assign [bare (.Identifier callResultVar)] seqCall, source, md⟩
+        ⟨.Assign [⟨callResultVar, none, emptyMd⟩] seqCall, source, md⟩
       ]
       modify fun s => { s with prependedStmts := s.prependedStmts ++ liftedCall}
       return bare (.Identifier callResultVar)
@@ -294,14 +289,14 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         modify fun s => { s with prependedStmts := [], subst := [] }
         let seqThen ← transformExpr thenBranch
         let thenPrepends ← takePrepends
-        let thenBlock := bare (.Block (thenPrepends ++ [⟨.Assign [bare (.Identifier condVar)] seqThen, source, md⟩]) none)
+        let thenBlock := bare (.Block (thenPrepends ++ [⟨.Assign [⟨condVar, none, emptyMd⟩] seqThen, source, md⟩]) none)
         -- Process else-branch from scratch
         modify fun s => { s with prependedStmts := [], subst := [] }
         let seqElse ← match elseBranch with
           | some e => do
               let se ← transformExpr e
               let elsePrepends ← takePrepends
-              pure (some (bare (.Block (elsePrepends ++ [⟨.Assign [bare (.Identifier condVar)] se, source, md⟩]) none)))
+              pure (some (bare (.Block (elsePrepends ++ [⟨.Assign [⟨condVar, none, emptyMd⟩] se, source, md⟩]) none)))
           | none => pure none
         -- Restore outer state
         modify fun s => { s with subst := savedSubst, prependedStmts := savedPrepends }

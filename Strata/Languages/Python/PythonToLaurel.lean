@@ -178,6 +178,10 @@ def mkCoreType (s: String): HighTypeMd :=
 def mkStmtExprMd (expr : StmtExpr) : StmtExprMd :=
   { val := expr, source := none }
 
+/-- Create an AstNode Identifier with default metadata -/
+def mkIdNode (name : String) : AstNode Identifier :=
+  { val := name, source := none }
+
 /-- Create a StmtExprMd with source location metadata.
     NOTE: stores location in `md` (legacy); a follow-up should migrate to `source`. -/
 def mkStmtExprMdWithLoc (expr : StmtExpr) (md : Imperative.MetaData Core.Expression) : StmtExprMd :=
@@ -1098,8 +1102,9 @@ def withException (ctx : TranslationContext) (funcname: String) : Bool :=
     | none => false
 
 def freeVar (name: String) := mkStmtExprMd (.Identifier name)
-def maybeExceptVar := freeVar "maybe_except"
-def nullcall_var := freeVar "nullcall_ret"
+def freeVarTarget (name: String) : AstNode Identifier := mkIdNode name
+def maybeExceptVar := freeVarTarget "maybe_except"
+def nullcall_var := freeVarTarget "nullcall_ret"
 
 partial def translateAssign  (ctx : TranslationContext)
                              (lhs: Python.expr SourceRange)
@@ -1142,8 +1147,7 @@ partial def translateAssign  (ctx : TranslationContext)
     match lhs with
     | .Name _ n _ =>
       if n.val ∈ ctx.variableTypes.unzip.1 then
-        let targetExpr := mkStmtExprMd (StmtExpr.Identifier n.val)
-        return (ctx, [mkStmtExprMd (StmtExpr.Assign [targetExpr] rhs_trans)] ++ exceptHavoc, true)
+        return (ctx, [mkStmtExprMd (StmtExpr.Assign [mkIdNode n.val] rhs_trans)] ++ exceptHavoc, true)
       else
         -- Use type annotation if it matches a known composite type
         let annType := annotation.map (fun a => pyExprToString a) |>.getD "Any"
@@ -1161,7 +1165,7 @@ partial def translateAssign  (ctx : TranslationContext)
   let mut newctx := ctx
   match lhs with
     | .Name _ n _ =>
-        let targetExpr := mkStmtExprMd (StmtExpr.Identifier n.val)
+        let targetNode := mkIdNode n.val
         let assignStmts := match rhs_trans.val with
         | .StaticCall fnname args =>
             if let some (ImportedSymbol.compositeType laurelName) := ctx.importedSymbols[fnname.text]? then
@@ -1171,23 +1175,23 @@ partial def translateAssign  (ctx : TranslationContext)
               let selfRef := mkStmtExprMd (StmtExpr.Identifier n.val)
               let initStmt := mkInstanceMethodCall laurelName "__init__" selfRef args md
               if n.val ∈ ctx.variableTypes.unzip.1 then
-                let assignStmt := mkStmtExprMdWithLoc (StmtExpr.Assign [targetExpr] newExpr) md
+                let assignStmt := mkStmtExprMdWithLoc (StmtExpr.Assign [targetNode] newExpr) md
                 [assignStmt, initStmt]
               else
                 let newStmt := mkStmtExprMdWithLoc (StmtExpr.LocalVariable n.val varType (some newExpr)) md
                 [newStmt, initStmt]
             else if withException ctx fnname.text then
-              [mkStmtExprMdWithLoc (StmtExpr.Assign [targetExpr, maybeExceptVar] rhs_trans) md]
+              [mkStmtExprMdWithLoc (StmtExpr.Assign [targetNode, maybeExceptVar] rhs_trans) md]
             else
-                [mkStmtExprMdWithLoc (StmtExpr.Assign [targetExpr] rhs_trans) md]
+                [mkStmtExprMdWithLoc (StmtExpr.Assign [targetNode] rhs_trans) md]
         | .New className =>
             if n.val ∈ ctx.variableTypes.unzip.1 then
-              [mkStmtExprMdWithLoc (StmtExpr.Assign [targetExpr] rhs_trans) md]
+              [mkStmtExprMdWithLoc (StmtExpr.Assign [targetNode] rhs_trans) md]
             else
               let varType := mkHighTypeMd (.UserDefined className)
               let newStmt := mkStmtExprMdWithLoc (StmtExpr.LocalVariable n.val varType (some rhs_trans)) md
               [newStmt]
-        | _ => [mkStmtExprMdWithLoc (StmtExpr.Assign [targetExpr] rhs_trans) md]
+        | _ => [mkStmtExprMdWithLoc (StmtExpr.Assign [targetNode] rhs_trans) md]
         newctx := match rhs_trans.val with
         | .StaticCall fnname _ =>
             if let some (ImportedSymbol.compositeType laurelName) := ctx.importedSymbols[fnname.text]? then
@@ -1217,7 +1221,10 @@ partial def translateAssign  (ctx : TranslationContext)
             let slices ← slices.mapM (translateExpr ctx)
             let md := sourceRangeToMetaData ctx.filePath lhs.toAst.ann
             let anySetsExpr := mkStmtExprMdWithLoc (StmtExpr.StaticCall "Any_sets!" [ListAny_mk slices, target, rhs_trans]) md
-            let assignStmts := [mkStmtExprMdWithLoc (StmtExpr.Assign [target] anySetsExpr) md]
+            let targetId := match target.val with
+              | .Identifier name => mkIdNode name.text
+              | _ => mkIdNode "_"
+            let assignStmts := [mkStmtExprMdWithLoc (StmtExpr.Assign [targetId] anySetsExpr) md]
             return (ctx,assignStmts, false)
         | _ =>  throw (.internalError "Invalid Subscript Expr")
     | .Attribute _ obj attr _ =>
@@ -1225,9 +1232,7 @@ partial def translateAssign  (ctx : TranslationContext)
       | .Name _ name _ =>
         if name.val == "self" && ctx.currentClassName.isSome then
           -- self.field : type = value in a method
-          let fieldAccess := mkStmtExprMd (StmtExpr.FieldSelect
-            (mkStmtExprMd (StmtExpr.Identifier "self"))
-            attr.val)
+          let selfExpr := mkStmtExprMd (StmtExpr.Identifier "self")
           -- When the annotation is a composite type, the RHS (which is Any)
           -- cannot be assigned directly; use New to initialize the field.
           let rhs' ← match annotation with
@@ -1237,12 +1242,20 @@ partial def translateAssign  (ctx : TranslationContext)
                 pure (mkStmtExprMd (StmtExpr.New (mkId laurelName)))
               else pure rhs_trans
             | none => pure rhs_trans
-          let assignStmt := mkStmtExprMdWithLoc (StmtExpr.Assign [fieldAccess] rhs') md
+          let assignStmt := mkStmtExprMdWithLoc (StmtExpr.FieldAssign selfExpr attr.val rhs') md
           return (ctx, [assignStmt], true)
         else
           let targetExpr ← translateExpr ctx lhs  -- This will handle self.field via translateExpr
-          let assignStmt := mkStmtExprMdWithLoc (StmtExpr.Assign [targetExpr] rhs_trans) md
-          return (ctx, [assignStmt], true)
+          match targetExpr.val with
+          | .FieldSelect obj member =>
+            let assignStmt := mkStmtExprMdWithLoc (StmtExpr.FieldAssign obj member rhs_trans) md
+            return (ctx, [assignStmt], true)
+          | _ =>
+            let targetId := match targetExpr.val with
+              | .Identifier name => mkIdNode name.text
+              | _ => mkIdNode "_"
+            let assignStmt := mkStmtExprMdWithLoc (StmtExpr.Assign [targetId] rhs_trans) md
+            return (ctx, [assignStmt], true)
       | _ => throw (.unsupportedConstruct "Assignment targets not yet supported" (toString (repr lhs)))
     | _ => throw (.unsupportedConstruct "Assignment targets not yet supported" (toString (repr lhs)))
 
@@ -1444,7 +1457,7 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
         let exceptionCheck := getExceptionAssertions ctx e
         -- Coerce Composite return values to Any for LaurelResult : Any
         let e ← coerceToAny ctx expr e
-        let assign := mkStmtExprMdWithLoc (StmtExpr.Assign [mkStmtExprMd (StmtExpr.Identifier PyLauFuncReturnVar)] e) md
+        let assign := mkStmtExprMdWithLoc (StmtExpr.Assign [mkIdNode PyLauFuncReturnVar] e) md
         .ok $ exceptionCheck ++ [assign, mkStmtExprMdWithLoc (StmtExpr.Exit "$body") md]
       | none => .ok [mkStmtExprMdWithLoc (StmtExpr.Exit "$body") md]
     return (ctx, stmts)
@@ -1575,7 +1588,7 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
           let varName := pyExprToString varExpr
           if varName ∈ currentCtx.variableTypes.unzip.fst then
             let assignStmt := mkStmtExprMd (StmtExpr.Assign
-              [mkStmtExprMd (StmtExpr.Identifier varName)] enterCall)
+              [mkIdNode varName] enterCall)
             setupStmts := setupStmts ++ [mgrDecl, assignStmt]
           else
             -- New variable — declare outside the block so it's visible after
@@ -1877,7 +1890,7 @@ def translateFunction (ctx : TranslationContext) (sourceRange: SourceRange) (fun
     let inputTypes := funcDecl.args.map (λ arg =>
       match arg.tys with | [ty] => (arg.name, ty) | _ => (arg.name, PyLauType.Any))
     let (bodyBlock, newCtx) ←  translateFunctionBody ctx inputTypes body
-    let noneReturn := mkStmtExprMd (.Assign [mkStmtExprMd (.Identifier PyLauFuncReturnVar)] AnyNone)
+    let noneReturn := mkStmtExprMd (.Assign [mkIdNode PyLauFuncReturnVar] AnyNone)
     let (renamedInputs, paramCopies) := renameInputParams inputs
       (match funcDecl.kwargsName with | some kw => (· == kw) | none => fun _ => false)
     let bodyBlock : StmtExprMd := match bodyBlock.val with
