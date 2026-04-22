@@ -259,7 +259,7 @@ inductive StmtExpr : Type where
   /-- A variable reference by name. -/
   | Identifier (name : Identifier)
   /-- Assignment to one or more local variable targets. Multiple targets are only allowed when the value is a `StaticCall` to a procedure with multiple outputs. -/
-  | Assign (targets : List (AstNode StmtExpr)) (value : AstNode StmtExpr)
+  | Assign (targets : List (AstNode Identifier)) (value : AstNode StmtExpr)
   /-- Assignment to a field on a target expression. -/
   | FieldAssign (target : AstNode StmtExpr) (member : Identifier) (value : AstNode StmtExpr)
   /-- Read a field from a target expression. -/

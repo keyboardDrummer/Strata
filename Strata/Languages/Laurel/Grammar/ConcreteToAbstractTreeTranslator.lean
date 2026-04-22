@@ -250,7 +250,18 @@ partial def translateStmtExpr (arg : Arg) : TransM StmtExprMd := do
       let value ← translateStmtExpr arg1
       match target.val with
       | .FieldSelect obj member => return mkStmtExprMd (.FieldAssign obj member value) src
-      | _ => return mkStmtExprMd (.Assign [target] value) src
+      | .Identifier name => return mkStmtExprMd (.Assign [⟨name, src, .empty⟩] value) src
+      | _ => TransM.error s!"assign target must be an identifier or field access"
+    | q`Laurel.multiAssign, #[arg0, arg1] =>
+      let targets ← match arg0 with
+        | .seq _ .comma args => args.toList.mapM fun a => do
+            let name ← translateIdent a
+            pure (⟨name, src, .empty⟩ : AstNode Identifier)
+        | _ => do
+            let name ← translateIdent arg0
+            pure [⟨name, src, .empty⟩]
+      let value ← translateStmtExpr arg1
+      return mkStmtExprMd (.Assign targets value) src
     | q`Laurel.new, #[nameArg] =>
       let name ← translateIdent nameArg
       return mkStmtExprMd (.New name) src

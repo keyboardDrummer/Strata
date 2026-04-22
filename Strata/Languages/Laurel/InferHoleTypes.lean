@@ -126,7 +126,7 @@ private def inferExpr (expr : StmtExprMd) (expectedType : HighTypeMd) : InferHol
       return ⟨.Block (← inferBlockStmts stmts expectedType) label, source, md⟩
   | .Assign targets value =>
       let targetType := match targets with
-        | target :: _ => computeExprType model target
+        | target :: _ => (model.get target.val).getType
         | _ => defaultHoleType
       return ⟨.Assign targets (← inferExpr value targetType), source, md⟩
   | .FieldAssign target member value =>

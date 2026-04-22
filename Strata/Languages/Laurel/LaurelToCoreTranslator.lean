@@ -405,7 +405,7 @@ def translateStmt (stmt : StmtExprMd)
           return [Core.Statement.init ident coreType .nondet md]
   | .Assign targets value =>
       match targets with
-      | [⟨ .Identifier targetId, _, _ ⟩] =>
+      | [⟨ targetId, _, _ ⟩] =>
           let ident := ⟨targetId.text, ()⟩
           -- Check if RHS is a procedure call (not a function)
           match value.val with
@@ -444,18 +444,13 @@ def translateStmt (stmt : StmtExprMd)
           match value.val with
           | .StaticCall callee args =>
               let coreArgs ← args.mapM (fun a => translateExpr a)
-              let lhsIdents := targets.filterMap fun t =>
-                match t.val with
-                | .Identifier name => some (⟨name.text, ()⟩)
-                | _ => none
+              let lhsIdents := targets.map fun t => ⟨t.val.text, ()⟩
               return [Core.Statement.call lhsIdents callee.text coreArgs (astNodeToCoreMd value)]
           | .InstanceCall .. =>
               -- Instance method call: havoc all target variables
-              let havocStmts := targets.filterMap fun t =>
-                match t.val with
-                | .Identifier name => some (Core.Statement.havoc ⟨name.text, ()⟩ md)
-                | _ => none
-              return (havocStmts)
+              let havocStmts := targets.map fun t =>
+                Core.Statement.havoc ⟨t.val.text, ()⟩ md
+              return havocStmts
           | _ =>
               emitDiagnostic $ md.toDiagnostic "Assignments with multiple target but without a RHS call should not be constructed"
               returnNone

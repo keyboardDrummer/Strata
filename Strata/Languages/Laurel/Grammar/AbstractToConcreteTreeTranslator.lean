@@ -100,11 +100,11 @@ where
       let initOpt := optionArg (init.map fun e => laurelOp "initializer" #[stmtExprToArg e])
       laurelOp "varDecl" #[ident name.text, typeOpt, initOpt]
     | .Assign targets value =>
-      -- Grammar only supports single-target assign; use first target or placeholder
-      let targetArg := match targets with
-        | t :: _ => stmtExprToArg t
-        | [] => laurelOp "identifier" #[ident "_"]
-      laurelOp "assign" #[targetArg, stmtExprToArg value]
+      match targets with
+      | [t] => laurelOp "assign" #[laurelOp "identifier" #[ident t.val.text], stmtExprToArg value]
+      | _ =>
+        let targetArgs := targets.map fun t => ident t.val.text
+        laurelOp "multiAssign" #[commaSep targetArgs.toArray, stmtExprToArg value]
     | .FieldAssign target member value =>
       let fieldAccess := laurelOp "fieldAccess" #[stmtExprToArg target, ident member.text]
       laurelOp "assign" #[fieldAccess, stmtExprToArg value]
@@ -164,7 +164,7 @@ where
     | .Abstract => laurelOp "identifier" #[ident "abstract"]
     | .All => laurelOp "identifier" #[ident "all"]
     | .PureFieldUpdate target field value =>
-      -- Not directly in grammar; emit as assignment to field
+      -- Not directly in grammar; emit as field assignment
       laurelOp "assign" #[
         laurelOp "fieldAccess" #[stmtExprToArg target, ident field.text],
         stmtExprToArg value
