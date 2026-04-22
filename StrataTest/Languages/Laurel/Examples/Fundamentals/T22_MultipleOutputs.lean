@@ -25,9 +25,8 @@ function twoOutputs(x: int)
 
 procedure testMultiOut() {
   var a: int;
-  a := twoOutputs(5);
-  assert a > 0
-//^^^^^^^^^^^^ error: assertion does not hold
+  a := twoOutputs(5)
+//     ^^^^^^^^^^^^^ error: call to 'twoOutputs' has 1 assignment target(s), but the function returns 2 output(s)
 };
 "
 

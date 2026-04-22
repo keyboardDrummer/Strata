@@ -14,7 +14,10 @@ Transforms functional procedures (`.isFunctional = true`) with multiple outputs
 into procedures that return a single synthesized result datatype. Call sites are
 rewritten to destructure the result using the generated accessors.
 
-This pass operates on `Program → Program`.
+Emits an error when the number of LHS assignment targets does not match the
+number of outputs of the called function.
+
+This pass operates on `Program → Program × List DiagnosticModel`.
 -/
 
 namespace Strata.Laurel
@@ -61,6 +64,51 @@ private def transformFunction (info : MultiOutInfo) (proc : Procedure) : Procedu
 private def destructorName (info : MultiOutInfo) (idx : Nat) : String :=
   s!"{info.resultTypeName}..out{idx}"
 
+private def mismatchError (source : Option FileRange) (callee : String)
+    (expected actual : Nat) : DiagnosticModel :=
+  let msg := s!"call to '{callee}' has {actual} assignment target(s), but the function returns {expected} output(s)"
+  match source with
+  | some fr => DiagnosticModel.withRange fr msg
+  | none => DiagnosticModel.fromMessage msg
+
+/-- Scan statements for mismatched multi-output call sites, returning diagnostics. -/
+private def validateStmts (infoMap : Std.HashMap String MultiOutInfo)
+    (stmts : List StmtExprMd) : List DiagnosticModel :=
+  stmts.filterMap fun stmt =>
+    match stmt.val with
+    | .Assign targets ⟨.StaticCall callee _args, callSrc, _⟩ =>
+      match infoMap.get? callee.text with
+      | some info =>
+        if targets.length != info.outputs.length then
+          some (mismatchError (callSrc.orElse fun _ => stmt.source) callee.text info.outputs.length targets.length)
+        else none
+      | none => none
+    | .LocalVariable _name _ty (some ⟨.StaticCall callee _args, callSrc, _⟩) =>
+      match infoMap.get? callee.text with
+      | some info =>
+        some (mismatchError (callSrc.orElse fun _ => stmt.source) callee.text info.outputs.length 1)
+      | none => none
+    | _ => none
+
+/-- Validate all procedure bodies for mismatched call sites. -/
+private def validateExpr (infoMap : Std.HashMap String MultiOutInfo)
+    (expr : StmtExprMd) : List DiagnosticModel :=
+  StateT.run (s := ([] : List DiagnosticModel)) (
+    mapStmtExprM (m := StateM (List DiagnosticModel)) (fun e => do
+      match e.val with
+      | .Block stmts _label =>
+        modify (· ++ validateStmts infoMap stmts)
+      | _ => pure ()
+      return e) expr) |>.2
+
+/-- Validate a procedure body. -/
+private def validateProcedure (infoMap : Std.HashMap String MultiOutInfo)
+    (proc : Procedure) : List DiagnosticModel :=
+  match proc.body with
+  | .Transparent b => validateExpr infoMap (mkMd (.Block [b] none))
+  | .Opaque _posts (some impl) _mods => validateExpr infoMap (mkMd (.Block [impl] none))
+  | _ => []
+
 /-- Rewrite a statement list, replacing multi-output call patterns. -/
 private def rewriteStmts (infoMap : Std.HashMap String MultiOutInfo)
     (stmts : List StmtExprMd) : List StmtExprMd :=
@@ -72,30 +120,18 @@ private def rewriteStmts (infoMap : Std.HashMap String MultiOutInfo)
       | .Assign targets ⟨.StaticCall callee args, callSrc, callMd⟩ =>
         match infoMap.get? callee.text with
         | some info =>
-          let tempName := mkId s!"${callee.text}$temp"
-          let tempTy := mkTy (.UserDefined (mkId info.resultTypeName))
-          let tempDecl := mkMd (.LocalVariable tempName tempTy
-            (some ⟨.StaticCall callee args, callSrc, callMd⟩))
-          let assigns := targets.zipIdx.map fun (tgt, i) =>
-            mkMd (.Assign [tgt]
-              (mkMd (.StaticCall (mkId (destructorName info i))
-                [mkMd (.Identifier tempName)])))
-          go rest (assigns.reverse ++ (tempDecl :: acc))
-        | none => go rest (stmt :: acc)
-      | .LocalVariable name _ty (some ⟨.StaticCall callee args, callSrc, callMd⟩) =>
-        match infoMap.get? callee.text with
-        | some info =>
-          match info.outputs with
-          | firstOut :: _ =>
+          if targets.length != info.outputs.length then
+            go rest (stmt :: acc)
+          else
             let tempName := mkId s!"${callee.text}$temp"
             let tempTy := mkTy (.UserDefined (mkId info.resultTypeName))
             let tempDecl := mkMd (.LocalVariable tempName tempTy
               (some ⟨.StaticCall callee args, callSrc, callMd⟩))
-            let localDecl := mkMd (.LocalVariable name firstOut.type
-              (some (mkMd (.StaticCall (mkId (destructorName info 0))
-                [mkMd (.Identifier tempName)]))))
-            go rest (localDecl :: tempDecl :: acc)
-          | [] => go rest (stmt :: acc)
+            let assigns := targets.zipIdx.map fun (tgt, i) =>
+              mkMd (.Assign [tgt]
+                (mkMd (.StaticCall (mkId (destructorName info i))
+                  [mkMd (.Identifier tempName)])))
+            go rest (assigns.reverse ++ (tempDecl :: acc))
         | none => go rest (stmt :: acc)
       | _ => go rest (stmt :: acc)
   go stmts []
@@ -123,19 +159,23 @@ private def rewriteProcedure (infoMap : Std.HashMap String MultiOutInfo)
   | _ => proc
 
 /-- Eliminate multiple outputs from a Program. Only applies to functional procedures. -/
-def eliminateMultipleOutputs (program : Program) : Program :=
+def eliminateMultipleOutputs (program : Program) : Program × List DiagnosticModel :=
   let infos := collectMultiOutFunctions program.staticProcedures
-  if infos.isEmpty then program else
+  if infos.isEmpty then (program, []) else
   let infoMap : Std.HashMap String MultiOutInfo :=
     infos.foldl (fun m info => m.insert info.funcName info) {}
+  -- Validate all call sites first
+  let diags := program.staticProcedures.flatMap (validateProcedure infoMap)
+  -- If there are errors, return the program unchanged
+  if !diags.isEmpty then (program, diags) else
   let newDatatypes := infos.map mkResultDatatype
   let procs := program.staticProcedures.map fun f =>
     match infoMap.get? f.name.text with
     | some info => rewriteProcedure infoMap (transformFunction info f)
     | none => rewriteProcedure infoMap f
-  { program with
+  ({ program with
     staticProcedures := procs
-    types := program.types ++ newDatatypes.map TypeDefinition.Datatype }
+    types := program.types ++ newDatatypes.map TypeDefinition.Datatype }, [])
 
 end -- public section
 end Strata.Laurel

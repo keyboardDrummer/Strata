@@ -111,13 +111,13 @@ private def runLaurelPasses (options : LaurelTranslateOptions) (program : Progra
   let (program, model) := (result.program, result.model)
   emit "ConstrainedTypeElim" program
 
-  let program := eliminateMultipleOutputs program
+  let (program, multiOutDiags) := eliminateMultipleOutputs program
   let result := resolve program (some model)
   let (program, model) := (result.program, result.model)
   emit "EliminateMultipleOutputs" program
 
   let allDiags := resolutionErrors ++ diamondErrors ++ nonCompositeDiags ++
-    valueReturnDiags.toList ++ modifiesDiags ++ constrainedTypeDiags
+    valueReturnDiags.toList ++ modifiesDiags ++ constrainedTypeDiags ++ multiOutDiags
   return (program, model, allDiags)
 
 /--
