@@ -163,6 +163,7 @@ def containsAssignmentOrImperativeCall (model: SemanticModel) (expr : StmtExprMd
   | AstNode.mk val _ _ =>
   match val with
   | .Assign .. => true
+  | .FieldAssign .. => true
   | .StaticCall name args1 =>
     (match model.get name with
     | .staticProcedure proc => !proc.isFunctional

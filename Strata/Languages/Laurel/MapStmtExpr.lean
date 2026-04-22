@@ -50,6 +50,8 @@ def mapStmtExprM [Monad m] (f : StmtExprMd → m StmtExprMd) (expr : StmtExprMd)
     pure ⟨.Return (← v.attach.mapM fun ⟨e, _⟩ => mapStmtExprM f e), source, md⟩
   | .Assign targets value =>
     pure ⟨.Assign (← targets.attach.mapM fun ⟨e, _⟩ => mapStmtExprM f e) (← mapStmtExprM f value), source, md⟩
+  | .FieldAssign target member value =>
+    pure ⟨.FieldAssign (← mapStmtExprM f target) member (← mapStmtExprM f value), source, md⟩
   | .FieldSelect target fieldName =>
     pure ⟨.FieldSelect (← mapStmtExprM f target) fieldName, source, md⟩
   | .PureFieldUpdate target fieldName newValue =>

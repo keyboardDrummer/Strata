@@ -101,6 +101,8 @@ private partial def collectExprNames (expr : StmtExprMd) : CollectM Unit := do
     collectExprNames body
   | .Assign targets value =>
     collectExprNames value; targets.forM collectExprNames
+  | .FieldAssign target _ value =>
+    collectExprNames target; collectExprNames value
   | .FieldSelect target _ => collectExprNames target
   | .PureFieldUpdate target _ newVal =>
     collectExprNames target; collectExprNames newVal

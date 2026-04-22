@@ -335,6 +335,11 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
     let targets' ← targets.mapM resolveStmtExpr
     let value' ← resolveStmtExpr value
     pure (.Assign targets' value')
+  | .FieldAssign target member value =>
+    let target' ← resolveStmtExpr target
+    let member' ← resolveFieldRef target' member coreMd
+    let value' ← resolveStmtExpr value
+    pure (.FieldAssign target' member' value')
   | .FieldSelect target fieldName =>
     let target' ← resolveStmtExpr target
     let fieldName' ← resolveFieldRef target' fieldName coreMd
@@ -600,6 +605,9 @@ private def collectStmtExpr (map : Std.HashMap Nat ResolvedNode) (expr : StmtExp
   | .Identifier _ => map
   | .Assign targets value =>
     let map := targets.foldl collectStmtExpr map
+    collectStmtExpr map value
+  | .FieldAssign target _ value =>
+    let map := collectStmtExpr map target
     collectStmtExpr map value
   | .FieldSelect target _ => collectStmtExpr map target
   | .PureFieldUpdate target _ newVal =>

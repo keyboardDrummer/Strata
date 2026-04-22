@@ -80,6 +80,7 @@ def computeExprType (model : SemanticModel) (expr : StmtExprMd) : HighTypeMd :=
   | .Exit _ => ⟨ .TVoid, source, md ⟩
   | .Return _ => ⟨ .TVoid, source, md ⟩
   | .Assign _ value => computeExprType model value
+  | .FieldAssign _ _ value => computeExprType model value
   | .Assert _ => ⟨ .TVoid, source, md ⟩
   | .Assume _ => ⟨ .TVoid, source, md ⟩
   -- Instance related

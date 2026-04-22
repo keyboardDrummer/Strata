@@ -248,7 +248,9 @@ partial def translateStmtExpr (arg : Arg) : TransM StmtExprMd := do
     | q`Laurel.assign, #[arg0, arg1] =>
       let target ← translateStmtExpr arg0
       let value ← translateStmtExpr arg1
-      return mkStmtExprMd (.Assign [target] value) src
+      match target.val with
+      | .FieldSelect obj member => return mkStmtExprMd (.FieldAssign obj member value) src
+      | _ => return mkStmtExprMd (.Assign [target] value) src
     | q`Laurel.new, #[nameArg] =>
       let name ← translateIdent nameArg
       return mkStmtExprMd (.New name) src

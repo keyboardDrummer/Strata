@@ -67,14 +67,12 @@ def collectExpr (expr : StmtExpr) : StateM AnalysisResult Unit := do
   | .While c invs d b => collectExprMd c; collectExprMd b; for inv in invs do collectExprMd inv; if let some x := d then collectExprMd x
   | .Return v => if let some x := v then collectExprMd x
   | .Assign assignTargets v =>
-      -- Check if any target is a field assignment (heap write)
       for ⟨assignTarget, _⟩ in assignTargets.attach do
-        match assignTarget.val with
-        | .FieldSelect _ _ =>
-            modify fun s => { s with writesHeapDirectly := true }
-        | _ => pure ()
         collectExprMd assignTarget
       collectExprMd v
+  | .FieldAssign target _ v =>
+      modify fun s => { s with writesHeapDirectly := true }
+      collectExprMd target; collectExprMd v
   | .PureFieldUpdate t _ v => collectExprMd t; collectExprMd v
   | .PrimitiveOp _ args => for a in args do collectExprMd a
   | .New _ => modify fun s => { s with writesHeapDirectly := true }
@@ -318,31 +316,23 @@ where
         let v' ← match v with | some x => some <$> recurse x | none => pure none
         return ⟨ .Return v', source, md ⟩
     | .Assign targets v =>
-        match targets with
-        | [⟨.FieldSelect target fieldName, _, _fieldSelectMd⟩] =>
-            let some qualifiedName := resolveQualifiedFieldName model fieldName
-              | return ⟨ .Hole, source, md ⟩
-            let valTy := (model.get fieldName).getType
-            let target' ← recurse target
-            let v' ← recurse v
-            -- Wrap value in Box constructor
-            recordBoxConstructor model valTy.val
-            let boxedVal := mkMd <| .StaticCall (boxConstructorName model valTy.val) [v']
-            let heapAssign := ⟨ .Assign [mkMd (.Identifier heapVar)]
-              (mkMd (.StaticCall "updateField" [mkMd (.Identifier heapVar), target', mkMd (.StaticCall qualifiedName []), boxedVal])), source, md ⟩
-            if valueUsed then
-              return ⟨ .Block [heapAssign, v'] none, source, md ⟩
-            else
-              return heapAssign
-        | [fieldSelectMd] =>
-          let tgt' ← recurse fieldSelectMd
-          return ⟨ .Assign [tgt'] (← recurse v), source, md ⟩
-        | [] =>
-            return ⟨ .Assign [] (← recurse v), source, md ⟩
-        | tgt :: rest =>
-            let tgt' ← recurse tgt
-            let targets' ← rest.mapM (recurse ·)
-            return ⟨ .Assign (tgt' :: targets') (← recurse v), source, md ⟩
+        let tgt' ← targets.mapM (recurse ·)
+        return ⟨ .Assign tgt' (← recurse v), source, md ⟩
+    | .FieldAssign target fieldName v =>
+        let some qualifiedName := resolveQualifiedFieldName model fieldName
+          | return ⟨ .Hole, source, md ⟩
+        let valTy := (model.get fieldName).getType
+        let target' ← recurse target
+        let v' ← recurse v
+        -- Wrap value in Box constructor
+        recordBoxConstructor model valTy.val
+        let boxedVal := mkMd <| .StaticCall (boxConstructorName model valTy.val) [v']
+        let heapAssign := ⟨ .Assign [mkMd (.Identifier heapVar)]
+          (mkMd (.StaticCall "updateField" [mkMd (.Identifier heapVar), target', mkMd (.StaticCall qualifiedName []), boxedVal])), source, md ⟩
+        if valueUsed then
+          return ⟨ .Block [heapAssign, v'] none, source, md ⟩
+        else
+          return heapAssign
     | .PureFieldUpdate t f v => return ⟨ .PureFieldUpdate (← recurse t) f (← recurse v), source, md ⟩
     | .PrimitiveOp op args =>
       let args' ← args.mapM (recurse ·)
