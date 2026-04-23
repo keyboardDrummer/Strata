@@ -34,6 +34,6 @@ def processLaurelFileWithOptions (options : LaurelVerifyOptions) (input : InputC
     pure diagnostics
 
 def processLaurelFile (input : InputContext) : IO (Array Diagnostic) :=
-  processLaurelFileWithOptions default input
+  processLaurelFileWithOptions {} input
 
 end Laurel
