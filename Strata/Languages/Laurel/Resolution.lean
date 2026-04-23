@@ -33,7 +33,7 @@ happens after Phase 1, the `ResolvedNode` values in the map contain the fully
 resolved sub-trees (e.g. a procedure's parameters already have their IDs).
 
 ### Definition nodes (introduce a name into scope)
-- `StmtExpr.LocalVariable` — local variable declaration
+- `Variable.Declare` — local variable declaration (in `Assign` targets or `Var`)
 - `StmtExpr.Forall` / `StmtExpr.Exists` — quantifier-bound variable
 - `Parameter` — procedure parameter
 - `Procedure` — procedure definition
@@ -43,10 +43,10 @@ resolved sub-trees (e.g. a procedure's parameters already have their IDs).
 - `Constant` — named constant
 
 ### Reference nodes (use a name)
-- `StmtExpr.Identifier` — variable reference
+- `StmtExpr.Var (.Local ...)` — variable reference
 - `StmtExpr.StaticCall` — static procedure call
 - `StmtExpr.InstanceCall` — instance method call
-- `StmtExpr.FieldSelect` — field access
+- `StmtExpr.Var (.Field ...)` — field access
 - `StmtExpr.New` — object creation (references a type)
 - `StmtExpr.Exit` — exit a labelled block
 - `HighType.UserDefined` — type reference
@@ -83,6 +83,8 @@ inductive ResolvedNode where
   | datatypeDefinition (ty : DatatypeDefinition)
   /-- A datatype constructor. -/
   | datatypeConstructor (typeName : Identifier) (ctor : DatatypeConstructor)
+  /-- A type alias. -/
+  | typeAlias (ty : TypeAlias)
   /-- A constant. -/
   | constant (c : Constant)
   /-- A quantifier-bound variable. -/
@@ -227,7 +229,7 @@ def resolveRef (name : Identifier) (md : Imperative.MetaData Core.Expression := 
 private def targetTypeName (target : StmtExprMd) : ResolveM (Option String) := do
   let s ← get
   match target.val with
-  | .Identifier ref =>
+  | .Var (.Local ref) =>
     match s.scope.get? ref.text with
     | some (_, node) =>
       match node.getType.val with
@@ -319,13 +321,6 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
     withScope do
       let stmts' ← stmts.mapM resolveStmtExpr
       pure (.Block stmts' label)
-  | .LocalVariable params init =>
-    let init' ← init.attach.mapM (fun a => have := a.property; resolveStmtExpr a.val)
-    let params' ← params.mapM fun p => do
-      let ty' ← resolveHighType p.type
-      let name' ← defineNameCheckDup p.name (.var p.name ty')
-      pure { name := name', type := ty' }
-    pure (.LocalVariable params' init')
   | .While cond invs dec body =>
     let cond' ← resolveStmtExpr cond
     let invs' ← invs.attach.mapM (fun a => have := a.property; resolveStmtExpr a.val)
@@ -340,17 +335,35 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
   | .LiteralBool v => pure (.LiteralBool v)
   | .LiteralString v => pure (.LiteralString v)
   | .LiteralDecimal v => pure (.LiteralDecimal v)
-  | .Identifier ref =>
+  | .Var (.Local ref) =>
     let ref' ← resolveRef ref coreMd
-    pure (.Identifier ref')
+    pure (.Var (.Local ref'))
+  | .Var (.Declare param) =>
+    let ty' ← resolveHighType param.type
+    let name' ← defineNameCheckDup param.name (.var param.name ty')
+    pure (.Var (.Declare ⟨name', ty'⟩))
   | .Assign targets value =>
-    let targets' ← targets.mapM resolveStmtExpr
+    let targets' ← targets.attach.mapM fun ⟨v, _⟩ => do
+      let ⟨vv, vs, vm⟩ := v
+      let coreMd := fileRangeToCoreMd vs vm
+      match vv with
+      | .Local ref =>
+        let ref' ← resolveRef ref coreMd
+        pure (⟨.Local ref', vs, vm⟩ : VariableMd)
+      | .Field target fieldName =>
+        let target' ← resolveStmtExpr target
+        let fieldName' ← resolveFieldRef target' fieldName coreMd
+        pure (⟨.Field target' fieldName', vs, vm⟩ : VariableMd)
+      | .Declare param =>
+        let ty' ← resolveHighType param.type
+        let name' ← defineNameCheckDup param.name (.var param.name ty')
+        pure (⟨.Declare ⟨name', ty'⟩, vs, vm⟩ : VariableMd)
     let value' ← resolveStmtExpr value
     pure (.Assign targets' value')
-  | .FieldSelect target fieldName =>
+  | .Var (.Field target fieldName) =>
     let target' ← resolveStmtExpr target
     let fieldName' ← resolveFieldRef target' fieldName coreMd
-    pure (.FieldSelect target' fieldName')
+    pure (.Var (.Field target' fieldName'))
   | .PureFieldUpdate target fieldName newVal =>
     let target' ← resolveStmtExpr target
     let fieldName' ← resolveFieldRef target' fieldName coreMd
@@ -407,9 +420,9 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
   | .Fresh val =>
     let val' ← resolveStmtExpr val
     pure (.Fresh val')
-  | .Assert cond =>
-    let cond' ← resolveStmtExpr cond
-    pure (.Assert cond')
+  | .Assert ⟨condExpr, summary⟩ =>
+    let cond' ← resolveStmtExpr condExpr
+    pure (.Assert { condition := cond', summary })
   | .Assume cond =>
     let cond' ← resolveStmtExpr cond
     pure (.Assume cond')
@@ -444,12 +457,12 @@ def resolveBody (body : Body) : ResolveM Body := do
     let b' ← resolveStmtExpr b
     return .Transparent b'
   | .Opaque posts impl mods =>
-    let posts' ← posts.mapM resolveStmtExpr
+    let posts' ← posts.mapM (·.mapM resolveStmtExpr)
     let impl' ← impl.mapM resolveStmtExpr
     let mods' ← mods.mapM resolveStmtExpr
     return .Opaque posts' impl' mods'
   | .Abstract posts =>
-    let posts' ← posts.mapM resolveStmtExpr
+    let posts' ← posts.mapM (·.mapM resolveStmtExpr)
     return .Abstract posts'
   | .External => return .External
 
@@ -459,7 +472,7 @@ def resolveProcedure (proc : Procedure) : ResolveM Procedure := do
   withScope do
     let inputs' ← proc.inputs.mapM resolveParameter
     let outputs' ← proc.outputs.mapM resolveParameter
-    let pres' ← proc.preconditions.mapM resolveStmtExpr
+    let pres' ← proc.preconditions.mapM (·.mapM resolveStmtExpr)
     let dec' ← proc.decreases.mapM resolveStmtExpr
     let body' ← resolveBody proc.body
     let invokeOn' ← proc.invokeOn.mapM resolveStmtExpr
@@ -486,7 +499,7 @@ def resolveInstanceProcedure (typeName : Identifier) (proc : Procedure) : Resolv
     modify fun s => { s with instanceTypeName := some typeName.text }
     let inputs' ← proc.inputs.mapM resolveParameter
     let outputs' ← proc.outputs.mapM resolveParameter
-    let pres' ← proc.preconditions.mapM resolveStmtExpr
+    let pres' ← proc.preconditions.mapM (·.mapM resolveStmtExpr)
     let dec' ← proc.decreases.mapM resolveStmtExpr
     let body' ← resolveBody proc.body
     if !proc.isFunctional && body'.isTransparent then
@@ -555,6 +568,10 @@ def resolveTypeDefinition (td : TypeDefinition) : ResolveM TypeDefinition := do
         return ⟨ destructorId, ty' ⟩
       return { name := ctorName', args := args' : DatatypeConstructor }
     return .Datatype { name := dtName', typeArgs := dt.typeArgs, constructors := ctors' }
+  | .Alias ta =>
+    let target' ← resolveHighType ta.target
+    let taName' ← defineName ta.name (.typeAlias { ta with target := target' })
+    return .Alias { name := taName', target := target' }
 
 /-- Resolve a constant definition. -/
 def resolveConstant (c : Constant) : ResolveM Constant := do
@@ -601,22 +618,25 @@ private def collectStmtExpr (map : Std.HashMap Nat ResolvedNode) (expr : StmtExp
     | some e => collectStmtExpr map e
     | none => map
   | .Block stmts _ => stmts.foldl collectStmtExpr map
-  | .LocalVariable params init =>
-    let map := params.foldl (fun m p => register (collectHighType m p.type) p.name (.var p.name p.type)) map
-    match init with
-    | some i => collectStmtExpr map i
-    | none => map
   | .While cond invs dec body =>
     let map := collectStmtExpr map cond
     let map := invs.foldl collectStmtExpr map
     let map := match dec with | some d => collectStmtExpr map d | none => map
     collectStmtExpr map body
   | .Return val => match val with | some v => collectStmtExpr map v | none => map
-  | .Identifier _ => map
+  | .Var (.Local _) => map
+  | .Var (.Declare param) =>
+    let map := register map param.name (.var param.name param.type)
+    collectHighType map param.type
   | .Assign targets value =>
-    let map := targets.foldl collectStmtExpr map
+    let map := targets.foldl (fun map t =>
+      match t.val with
+      | .Declare param =>
+        let map := register map param.name (.var param.name param.type)
+        collectHighType map param.type
+      | _ => map) map
     collectStmtExpr map value
-  | .FieldSelect target _ => collectStmtExpr map target
+  | .Var (.Field target _) => collectStmtExpr map target
   | .PureFieldUpdate target _ newVal =>
     let map := collectStmtExpr map target
     collectStmtExpr map newVal
@@ -647,7 +667,7 @@ private def collectStmtExpr (map : Std.HashMap Nat ResolvedNode) (expr : StmtExp
   | .Assigned name => collectStmtExpr map name
   | .Old val => collectStmtExpr map val
   | .Fresh val => collectStmtExpr map val
-  | .Assert cond => collectStmtExpr map cond
+  | .Assert ⟨cond, _⟩ => collectStmtExpr map cond
   | .Assume cond => collectStmtExpr map cond
   | .ProveBy val proof =>
     let map := collectStmtExpr map val
@@ -661,10 +681,10 @@ private def collectBody (map : Std.HashMap Nat ResolvedNode) (body : Body)
   match body with
   | .Transparent b => collectStmtExpr map b
   | .Opaque posts impl mods =>
-    let map := posts.foldl collectStmtExpr map
+    let map := posts.foldl (fun map c => collectStmtExpr map c.condition) map
     let map := match impl with | some i => collectStmtExpr map i | none => map
     mods.foldl collectStmtExpr map
-  | .Abstract posts => posts.foldl collectStmtExpr map
+  | .Abstract posts => posts.foldl (fun map c => collectStmtExpr map c.condition) map
   | .External => map
 
 private def collectParameter (map : Std.HashMap Nat ResolvedNode) (param : Parameter)
@@ -677,7 +697,7 @@ private def collectProcedure (map : Std.HashMap Nat ResolvedNode) (proc : Proced
   let map := register map proc.name (mkNode proc)
   let map := proc.inputs.foldl collectParameter map
   let map := proc.outputs.foldl collectParameter map
-  let map := proc.preconditions.foldl collectStmtExpr map
+  let map := proc.preconditions.foldl (fun map c => collectStmtExpr map c.condition) map
   let map := match proc.decreases with | some d => collectStmtExpr map d | none => map
   collectBody map proc.body
 
@@ -707,6 +727,9 @@ private def collectTypeDefinition (map : Std.HashMap Nat ResolvedNode) (td : Typ
         collectHighType map p.type
       ) map
     ) map
+  | .Alias ta =>
+    let map := register map ta.name (.typeAlias ta)
+    collectHighType map ta.target
 
 private def collectConstant (map : Std.HashMap Nat ResolvedNode) (c : Constant)
     : Std.HashMap Nat ResolvedNode :=
@@ -754,6 +777,8 @@ private def preRegisterTopLevel (program : Program) : ResolveM Unit := do
         let _ ← defineName ctor.name (.datatypeConstructor dt.name ctor)
         for p in ctor.args do
           let _ ← defineName p.name placeholderNode (some (dt.destructorName p))
+    | .Alias ta =>
+      let _ ← defineNameCheckDup ta.name (.typeAlias ta)
   -- Pre-register constants
   for c in program.constants do
     let _ ← defineNameCheckDup c.name (.constant c)

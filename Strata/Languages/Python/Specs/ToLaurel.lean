@@ -97,12 +97,19 @@ def pushType (td : TypeDefinition) : ToLaurelM Unit :=
   modify fun s => { s with types := s.types.push td }
 
 /-- Add an overload dispatch entry for a function. -/
-def pushOverloadEntry (funcName : String) (literalValue : String)
-    (returnType : PythonIdent) : ToLaurelM Unit :=
+def pushOverloadEntry (funcName : String) (paramName : String)
+    (literalValue : String) (returnType : PythonIdent) : ToLaurelM Unit :=
   modify fun s =>
     let existing := s.overloads.getD funcName {}
-    let updated := existing.insert literalValue returnType
-    { s with overloads := s.overloads.insert funcName updated }
+    let updated : FunctionOverloads := { existing with
+      paramName := existing.paramName <|> some paramName
+      entries := existing.entries.insert literalValue returnType }
+    if existing.paramName.any (· != paramName) then
+      dbg_trace s!"Warning: overload entries for '{funcName}' disagree on \
+        dispatch parameter name: existing '{existing.paramName.get!}', new '{paramName}'"
+      { s with overloads := s.overloads.insert funcName updated }
+    else
+      { s with overloads := s.overloads.insert funcName updated }
 
 /-- Prepend the module prefix to a name. Returns the name unchanged
     if the prefix is empty. -/
@@ -158,11 +165,6 @@ def atomTypeToString (a : SpecAtomType) : String :=
     else
       let argStrs := args.map specTypeToString
       s!"{nm}[{String.intercalate ", " argStrs.toList}]"
-  | .pyClass name args =>
-    if args.isEmpty then name
-    else
-      let argStrs := args.map specTypeToString
-      s!"{name}[{String.intercalate ", " argStrs.toList}]"
   | .intLiteral v => s!"Literal[{v}]"
   | .stringLiteral v => s!"Literal[\"{v}\"]"
   | .typedDict _ _ _ => "TypedDict"
@@ -255,25 +257,24 @@ def detectOptionalType (ty : SpecType) : ToLaurelM (Option HighTypeMd) := do
     return none
 
 /-- Known PythonIdent → Laurel type mappings for single-atom ident types.
-    - `bytes`/`bytearray` → TString (closest string-like approximation)
-    - `complex` → TReal (no complex type in SMT; real is the closest numeric type)
-    - `Exception` → UserDefined "Error" (matches CorePrelude's Error datatype)
-    - `typing.Any` → UserDefined "Any" (datatype in Laurel prelude) -/
+    Matches PythonToLaurel's type mapping: only int, str, bool, float get
+    concrete Laurel types; everything else maps to Any. -/
 private def knownIdentTypes : Std.HashMap PythonIdent HighTypeMd :=
   .ofList [
     (.builtinsBool,      tyBool),
-    (.builtinsBytearray, tyString),
-    (.builtinsBytes,     tyString),
-    (.builtinsComplex,   tyReal),
-    (.builtinsDict,      tyDictStrAny),
-    (.builtinsException, tyError),
+    (.builtinsBytearray, tyAny),
+    (.builtinsBytes,     tyAny),
+    (.builtinsComplex,   tyAny),
+    (.builtinsDict,      tyAny),
+    (.builtinsException, tyAny),
     (.builtinsFloat,     tyReal),
     (.builtinsInt,       tyInt),
     (.builtinsStr,       tyString),
     (.noneType,          tyVoid),
     (.typingAny,         tyAny),
-    (.typingDict,        tyDictStrAny),
-    (.typingList,        tyListStr),
+    (.typingBinaryIO,    tyAny),
+    (.typingDict,        tyAny),
+    (.typingList,        tyAny),
   ]
 
 /-- Convert a SpecType to a Laurel HighTypeMd. -/
@@ -306,20 +307,9 @@ def specTypeToLaurelType (ty : SpecType) : ToLaurelM HighTypeMd := do
     -- Single atom type
     match ty.atoms[0]! with
     | .ident nm _args =>
-      -- Warn for lossy known-type approximations
-      if nm == .builtinsBytes || nm == .builtinsBytearray then
-        reportError .bytesToString default s!"'{nm}' mapped to TString (bytes have different semantics)"
-      if nm == .builtinsComplex then
-        reportError .complexToReal default s!"'{nm}' mapped to TReal (complex loses imaginary component)"
       if let some ty := knownIdentTypes[nm]? then
         return ty
-      reportError .unknownType default s!"Unknown type '{nm}' mapped to TString"
-      return tyString
-    | .pyClass name args =>
-      if args.size > 0 then
-        reportError .unsupportedGenericClass default
-          s!"Generic class '{name}' with type args unsupported"
-      let prefixed ← prefixName name
+      let prefixed ← prefixName nm.name
       return mkTy (.UserDefined { text := prefixed, md := .empty })
     | .intLiteral _ => return tyInt
     | .stringLiteral _ => return tyString
@@ -336,21 +326,19 @@ private def mkFileMd : ToLaurelM (Imperative.MetaData Core.Expression) := do
   return #[⟨Imperative.MetaData.fileRange, .fileRange fr⟩]
 
 /-- Create metadata with a file range from the current pyspec file. -/
-private def mkMdWithFileRange (loc : SourceRange) (msg : String := "")
+private def mkMdWithFileRange (loc : SourceRange)
     : ToLaurelM (Imperative.MetaData Core.Expression) := do
   let ctx ← read
   let fr : FileRange := { file := .file ctx.filepath.toString, range := loc }
-  let mut md : Imperative.MetaData Core.Expression := #[⟨Imperative.MetaData.fileRange, .fileRange fr⟩]
-  if !msg.isEmpty then
-    md := md.withPropertySummary msg
+  let md : Imperative.MetaData Core.Expression := #[⟨Imperative.MetaData.fileRange, .fileRange fr⟩]
   return md
 
-/-- Wrap a StmtExpr with metadata containing a file range and optional message. -/
-private def mkStmtWithLoc (e : StmtExpr) (loc : SourceRange) (msg : String := "")
+/-- Wrap a StmtExpr with metadata containing a file range. -/
+private def mkStmtWithLoc (e : StmtExpr) (loc : SourceRange)
     : ToLaurelM StmtExprMd := do
   let ctx ← read
   let fr : FileRange := { file := .file ctx.filepath.toString, range := loc }
-  let md ← mkMdWithFileRange loc msg
+  let md ← mkMdWithFileRange loc
   return { val := e, source := some fr, md := md }
 
 /--
@@ -529,14 +517,13 @@ def buildSpecPreconditions (preconditions : Array Assertion)
     (ctx : SpecExprContext)
     (requiredParams : Array String := #[])
     : ToLaurelM (List StmtExprMd × Body) := do
-  let mut preconds : Array StmtExprMd := #[]
+  let mut preconds : Array Condition := #[]
   let mut idx := 0
   -- Required parameters: not None
   for param in requiredParams do
     let cond : TypedStmtExpr _ := .not (.anyIsfromNone (.identifier param Laurel.tyAny md))
     let msg := SpecAssertMsg.requiredParam param |>.render
-    let precondMd ← mkMdWithFileRange default msg
-    preconds := preconds.push { val := cond.stmt.val, source := cond.stmt.source, md := precondMd }
+    preconds := preconds.push { condition := cond.stmt, summary := some msg }
     idx := idx + 1
   for assertion in preconditions do
     let formattedMsg := formatAssertionMessage assertion.message
@@ -546,8 +533,7 @@ def buildSpecPreconditions (preconditions : Array Assertion)
     let (⟨condType, condExpr⟩, success) ← runChecked <| specExprToLaurel assertion.formula md ctx
     if success then
       if let .TBool := condType then
-        let precondMd ← mkMdWithFileRange default msg
-        preconds := preconds.push { val := condExpr.stmt.val, source := condExpr.stmt.source, md := precondMd }
+        preconds := preconds.push { condition := condExpr.stmt, summary := some msg }
       else
         reportError .typeError default
           s!"Precondition expression is not Bool in '{ctx.procName}' (skipping): {msg}"
@@ -667,9 +653,8 @@ def typeDefToLaurel (td : TypeDef) : ToLaurelM Unit := do
   })
 
 /-- Extract an overload dispatch entry from an `@overload` function declaration.
-    Looks for a `stringLiteral` in the first argument's type and a class
-    return type (either `.pyClass` for locally-defined classes or `.ident`
-    for externally imported classes), and records them in the dispatch table. -/
+    Looks for a `stringLiteral` in the first argument's type and an `.ident`
+    return type, and records them in the dispatch table. -/
 def extractOverloadEntry (func : FunctionDecl) : ToLaurelM Unit := do
   let args := func.args.args
   let .isTrue _ := decideProp (args.size > 0)
@@ -699,10 +684,6 @@ def extractOverloadEntry (func : FunctionDecl) : ToLaurelM Unit := do
       return
   let retType ←
         match func.returnType.atoms[0] with
-        | .pyClass name _ => do
-          let ctx ← read
-          let prefixed ← prefixName name
-          pure (PythonIdent.mk ctx.modulePrefix prefixed)
         | .ident nm _ => pure nm
         | _ =>
           reportError .overloadReturnNotClass func.loc
@@ -710,7 +691,8 @@ def extractOverloadEntry (func : FunctionDecl) : ToLaurelM Unit := do
               '{specTypeToString func.returnType}' is not a \
               class type"
           return
-  pushOverloadEntry func.name literalValue retType
+  -- args[0].name is the formal parameter name from the PySpec (not a call-site argument)
+  pushOverloadEntry func.name args[0].name literalValue retType
 
 /-- Convert a single PySpec signature to Laurel declarations. -/
 def signatureToLaurel (sig : Signature) : ToLaurelM Unit :=

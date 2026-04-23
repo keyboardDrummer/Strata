@@ -61,13 +61,11 @@ def collectStaticCallNames (expr : StmtExprMd) : List String :=
       | some eelse => collectStaticCallNames eelse
       | none => []
   | .Block stmts _ => stmts.flatMap (fun s => collectStaticCallNames s)
-  | .Assign targets v =>
-      targets.flatMap (fun t => collectStaticCallNames t) ++
+  | .Assign _targets v =>
+      -- Targets are Variables; Field targets can contain StmtExpr children,
+      -- but field-target assigns are eliminated before this pass runs,
+      -- so we only need to collect from the value.
       collectStaticCallNames v
-  | .LocalVariable _ initOption =>
-      match initOption with
-      | some init => collectStaticCallNames init
-      | none => []
   | .Return v =>
       match v with
       | some x => collectStaticCallNames x
@@ -89,11 +87,12 @@ def collectStaticCallNames (expr : StmtExprMd) : List String :=
       | some t => collectStaticCallNames t
       | none => []) ++
       collectStaticCallNames body
-  | .FieldSelect t _ => collectStaticCallNames t
+  | .Var (.Field t _) => collectStaticCallNames t
   | .PureFieldUpdate t _ v => collectStaticCallNames t ++ collectStaticCallNames v
   | .InstanceCall t _ args =>
       collectStaticCallNames t ++ args.flatMap (fun a => collectStaticCallNames a)
-  | .Old v | .Fresh v | .Assert v | .Assume v => collectStaticCallNames v
+  | .Old v | .Fresh v | .Assume v => collectStaticCallNames v
+  | .Assert ⟨cond, _summary⟩ => collectStaticCallNames cond
   | .ProveBy v p => collectStaticCallNames v ++ collectStaticCallNames p
   | .ReferenceEquals l r => collectStaticCallNames l ++ collectStaticCallNames r
   | .AsType t _ | .IsType t _ => collectStaticCallNames t
@@ -101,6 +100,11 @@ def collectStaticCallNames (expr : StmtExprMd) : List String :=
   | .Assigned v => collectStaticCallNames v
   | _ => []
 termination_by sizeOf expr
+decreasing_by
+  all_goals simp_wf
+  all_goals (try have := AstNode.sizeOf_val_lt expr)
+  all_goals (try term_by_mem)
+  all_goals omega
 
 /--
 Build the procedure call graph, run Tarjan's SCC algorithm, and return each SCC
@@ -131,11 +135,12 @@ public def computeSccDecls (program : UnorderedCoreWithLaurelTypes) : List (List
   let procCallees (proc : Procedure) : List String :=
     let bodyExprs : List StmtExprMd := match proc.body with
       | .Transparent b => [b]
-      | .Opaque postconds (some impl) _ => postconds ++ [impl]
-      | .Opaque postconds none _ => postconds
+      | .Opaque postconds (some impl) _ => postconds.map (·.condition) ++ [impl]
+      | .Opaque postconds none _ => postconds.map (·.condition)
       | _ => []
     let contractExprs : List StmtExprMd :=
-      proc.preconditions ++
+      proc.preconditions.map (·.condition) ++
+      proc.invokeOn.toList ++
       proc.axioms
     (bodyExprs ++ contractExprs).flatMap collectStaticCallNames
 

@@ -185,7 +185,7 @@ structure Procedure : Type where
   /-- Output parameters with their types. Multiple outputs are supported. -/
   outputs : List Parameter
   /-- The preconditions that callers must satisfy. -/
-  preconditions : List (AstNode StmtExpr)
+  preconditions : List Condition
   -- TODO: add back determinism together with an implementation
   /-- Optional termination measure for recursive procedures. -/
   decreases : Option (AstNode StmtExpr) -- optionally prove termination
@@ -211,6 +211,16 @@ structure Parameter where
   type : AstNode HighType
 
 /--
+A condition with an optional human-readable summary.
+Used for assertions, preconditions, and postconditions.
+-/
+structure Condition where
+  /-- The boolean condition expression. -/
+  condition : AstNode StmtExpr
+  /-- Optional human-readable summary describing the property being checked. -/
+  summary : Option String := none
+
+/--
 The body of a procedure. A body can be transparent (with a visible
 implementation), opaque (with a postcondition and optional implementation),
 or abstract (requiring overriding in extending types).
@@ -220,13 +230,24 @@ inductive Body where
   | Transparent (body : AstNode StmtExpr)
   /-- An opaque body with a postcondition, optional implementation, and modifies clause. Without an implementation the postcondition is assumed. -/
   | Opaque
-      (postconditions : List (AstNode StmtExpr))
+      (postconditions : List Condition)
       (implementation : Option (AstNode StmtExpr))
       (modifies : List (AstNode StmtExpr))
   /-- An abstract body that must be overridden in extending types. A type containing any members with abstract bodies cannot be instantiated. -/
-  | Abstract (postconditions : List (AstNode StmtExpr))
+  | Abstract (postconditions : List Condition)
   /-- An external body for procedures that are not translated to Core (e.g., built-in primitives). -/
   | External
+
+/--
+A variable reference or declaration: a local variable, a field access on an expression, or a local variable declaration.
+-/
+inductive Variable : Type where
+  /-- A local variable reference by name. -/
+  | Local (name : Identifier)
+  /-- Read a field from a target expression. Combined with `Assign` for field writes. -/
+  | Field (target : AstNode StmtExpr) (fieldName : Identifier)
+  /-- A local variable declaration with a name and type. -/
+  | Declare (parameter : Parameter)
 
 /--
 The unified statement-expression type for Laurel programs.
@@ -241,8 +262,6 @@ inductive StmtExpr : Type where
   | IfThenElse (cond : AstNode StmtExpr) (thenBranch : AstNode StmtExpr) (elseBranch : Option (AstNode StmtExpr))
   /-- A sequence of statements with an optional label for `Exit`. -/
   | Block (statements : List (AstNode StmtExpr)) (label : Option String)
-  /-- A local variable declaration with typed parameters and optional initializer. The initializer must be set if this `StmtExpr` is pure. Multiple parameters are only allowed when the initializer is a `StaticCall` to a procedure with multiple outputs. -/
-  | LocalVariable (parameters : List Parameter) (initializer : Option (AstNode StmtExpr))
   /-- A while loop with a condition, invariants, optional termination measure, and body. Only allowed in impure contexts. -/
   | While (cond : AstNode StmtExpr) (invariants : List (AstNode StmtExpr))
     (decreases : Option (AstNode StmtExpr))
@@ -259,12 +278,10 @@ inductive StmtExpr : Type where
   | LiteralString (value : String)
   /-- A decimal literal. -/
   | LiteralDecimal (value : Decimal)
-  /-- A variable reference by name. -/
-  | Identifier (name : Identifier)
-  /-- Assignment to one or more targets. Multiple targets are only allowed when the value is a `StaticCall` to a procedure with multiple outputs. -/
-  | Assign (targets : List (AstNode StmtExpr)) (value : AstNode StmtExpr)
-  /-- Read a field from a target expression. Combined with `Assign` for field writes. -/
-  | FieldSelect (target : AstNode StmtExpr) (fieldName : Identifier)
+  /-- A variable reference. -/
+  | Var (var : Variable)
+  /-- Assignment to one or more targets. Multiple targets are only supported with identifier targets and a call as the RHS. -/
+  | Assign (targets : List (AstNode Variable)) (value : AstNode StmtExpr)
   /-- Update a field on a pure (value) type, producing a new value. -/
   | PureFieldUpdate (target : AstNode StmtExpr) (fieldName : Identifier) (newValue : AstNode StmtExpr)
   /-- Call a static procedure by name with the given arguments. -/
@@ -273,7 +290,7 @@ inductive StmtExpr : Type where
   | PrimitiveOp (operator : Operation) (arguments : List (AstNode StmtExpr))
   /-- Create new object (`new`). -/
   | New (ref : Identifier)
-  /-- Identifier to the current object (`this`/`self`). -/
+  /-- Reference to the current object (`this`/`self`). -/
   | This
   /-- Reference equality test between two expressions. -/
   | ReferenceEquals (lhs : AstNode StmtExpr) (rhs : AstNode StmtExpr)
@@ -294,7 +311,7 @@ inductive StmtExpr : Type where
   /-- Check whether a reference is freshly allocated. May only target impure composite types. -/
   | Fresh (value : AstNode StmtExpr)
   /-- Assert a condition, generating a proof obligation. -/
-  | Assert (condition : AstNode StmtExpr)
+  | Assert (condition : Condition)
   /-- Assume a condition, restricting the state space. -/
   | Assume (condition : AstNode StmtExpr)
   /-- Attach a proof hint to a value. The semantics are those of `value`, but `proof` helps discharge assertions in `value`. -/
@@ -319,9 +336,21 @@ end
 
 @[expose] abbrev HighTypeMd := AstNode HighType
 @[expose] abbrev StmtExprMd := AstNode StmtExpr
+@[expose] abbrev VariableMd := AstNode Variable
 
 theorem AstNode.sizeOf_val_lt {t : Type} [SizeOf t] (e : AstNode t) : sizeOf e.val < sizeOf e := by
   cases e; grind
+
+theorem Condition.sizeOf_condition_lt (c : Condition) : sizeOf c.condition < 1 + sizeOf c := by
+  cases c; grind
+
+/-- Apply a monadic transformation to the condition expression, preserving the summary. -/
+def Condition.mapM [Monad m] (f : AstNode StmtExpr → m (AstNode StmtExpr)) (c : Condition) : m Condition :=
+  return { c with condition := ← f c.condition }
+
+/-- Apply a pure transformation to the condition expression, preserving the summary. -/
+def Condition.mapCondition (f : AstNode StmtExpr → AstNode StmtExpr) (c : Condition) : Condition :=
+  { c with condition := f c.condition }
 
 /-- Build Core metadata from an optional source location and Laurel metadata. -/
 def fileRangeToCoreMd (source : Option FileRange) (md : Imperative.MetaData Core.Expression) : Imperative.MetaData Core.Expression :=
@@ -336,11 +365,23 @@ def astNodeToCoreMd (node : AstNode α) : Imperative.MetaData Core.Expression :=
 instance : Inhabited StmtExpr where
   default := .Hole
 
+instance : Inhabited (AstNode Variable) where
+  default := { val := .Local default, source := none }
+
 instance : Inhabited HighTypeMd where
   default := { val := HighType.Unknown, source := none }
 
 instance : Inhabited StmtExprMd where
   default := { val := default, source := none }
+
+instance : Std.ToFormat Variable where
+  format
+    | .Local name => Std.format name.text
+    | .Field _target fieldName => f!"<expr>.{fieldName.text}"
+    | .Declare param => f!"var {param.name.text}"
+
+instance : Std.ToFormat (AstNode Variable) where
+  format v := Std.format v.val
 
 def highEq (a : HighTypeMd) (b : HighTypeMd) : Bool := match _a: a.val, _b: b.val with
   | HighType.TVoid, HighType.TVoid => true
@@ -465,8 +506,16 @@ def DatatypeDefinition.destructorName (dt : DatatypeDefinition) (field : Paramet
 def DatatypeDefinition.unsafeDestructorName (dt : DatatypeDefinition) (field : Parameter) : String :=
   s!"{dt.name.text}..{field.name.text}!"
 
+/-- A type alias, mapping a name to an existing type. Eliminated by the
+    `TypeAliasElim` pass after the first resolution. -/
+structure TypeAlias where
+  name : Identifier
+  target : HighTypeMd
+  deriving Repr
+
 /--
-A user-defined type, either a composite type, a constrained type, or an algebraic datatype.
+A user-defined type, either a composite type, a constrained type, an algebraic datatype,
+or a type alias.
 
 Algebriac datatypes can also be encoded uses composite and constrained types. Here are two examples:
 
@@ -485,12 +534,15 @@ inductive TypeDefinition where
   | Constrained (ty : ConstrainedType)
   /-- An algebriac datatype. -/
   | Datatype (ty : DatatypeDefinition)
+  /-- A type alias (e.g. `MyInt = int`). Eliminated before Core translation. -/
+  | Alias (ty : TypeAlias)
   deriving Inhabited
 
 def TypeDefinition.name : TypeDefinition → Identifier
   | .Composite ty => ty.name
   | .Constrained ty => ty.name
   | .Datatype ty => ty.name
+  | .Alias ty => ty.name
 
 structure Constant where
   name : Identifier
