@@ -306,7 +306,11 @@ where
               let isLast := idx == n - 1
               let s' ← recurse s (isLast && valueUsed)
               let rest' ← processStmts (idx + 1) rest
-              pure (s' :: rest')
+              -- Flatten unlabeled blocks returned by recurse so that
+              -- Declare targets remain in the enclosing scope.
+              match s'.val with
+              | .Block innerStmts none => pure (innerStmts ++ rest')
+              | _ => pure (s' :: rest')
           termination_by sizeOf remaining
         let stmts' ← processStmts 0 stmts
         return ⟨ .Block stmts' label, source, md ⟩
@@ -336,13 +340,18 @@ where
           | _ => return (accTargets ++ [t], accStmts)
 
       let (v', addedHeap) <- match _hv : v.val with
-        | .StaticCall _callee args => do
-          let _args' <- args.mapM recurse
-          pure (v, true)
+        | .StaticCall callee args => do
+          let args' <- args.mapM recurse
+          let calleeWritesHeap ← writesHeap callee
+          let calleeReadsHeap ← readsHeap callee
+          let fullArgs := if calleeWritesHeap || calleeReadsHeap
+            then mkMd (.Var (.Local heapVar)) :: args'
+            else args'
+          pure (⟨.StaticCall callee fullArgs, v.source, v.md⟩, calleeWritesHeap)
         | .InstanceCall callTarget _callee args => do
-          let _callTarget' ← recurse callTarget
-          let _args' <- args.mapM recurse
-          pure (v, true)
+          let callTarget' ← recurse callTarget
+          let args' <- args.mapM recurse
+          pure (⟨.InstanceCall callTarget' _callee args', v.source, v.md⟩, false)
         | _ =>
           pure (<- recurse v, false)
 
@@ -352,8 +361,8 @@ where
         else processedTargets
       let newAssign: AstNode StmtExpr := ⟨ StmtExpr.Assign allTargets v', source, default ⟩
 
-      let declareToLocal(var: Variable): Variable := match var with
-        | .Declare param => Variable.Local param.name
+      let declareToLocal (v : Variable) : Variable := match v with
+        | .Declare param => .Local param.name
         | x => x
 
       let suffixes: List (AstNode StmtExpr) := if valueUsed && targets.length == 1

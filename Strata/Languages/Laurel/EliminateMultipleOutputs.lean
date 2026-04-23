@@ -86,11 +86,7 @@ private def rewriteAssign (infoMap : Std.HashMap String MultiOutInfo)
   | some info =>
     if targets.length ≤ info.outputs.length then
       let tempName := s!"${callee.text}$temp{counter}"
-      -- If the call has fewer explicit args than the function expects,
-      -- prepend $heap for each missing implicit heap parameter.
-      let implicitCount := info.inputCount - args.length
-      let implicitArgs := List.replicate implicitCount (mkMd (.Var (.Local (mkId "$heap"))))
-      let fullArgs := implicitArgs ++ args
+      let fullArgs := args
       let tempDecl := mkMd (.Assign [mkVarMd (.Declare ⟨mkId tempName, mkTy (.UserDefined (mkId info.resultTypeName))⟩)]
           ⟨.StaticCall callee fullArgs, callSrc, callMd⟩)
       let assigns := targets.zipIdx.map fun (tgt, i) =>

@@ -143,8 +143,7 @@ private def collectContractInfo (procs : List Procedure) : Std.HashMap String Co
     let hasPre := !proc.preconditions.isEmpty
     let hasPost := !postconds.isEmpty
     if hasPre || hasPost then
-      let implicitArgs := proc.inputs.filter (fun p => p.name.text.startsWith "$heap")
-        |>.map (fun _ => mkMd (.Var (.Local (mkId "$heap"))))
+      let implicitArgs : List StmtExprMd := []
       m.insert proc.name.text {
         hasPreCondition := hasPre
         hasPostCondition := hasPost
