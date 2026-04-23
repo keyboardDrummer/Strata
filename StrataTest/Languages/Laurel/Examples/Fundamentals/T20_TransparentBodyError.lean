@@ -12,14 +12,15 @@ open StrataTest.Util
 namespace Strata
 namespace Laurel
 
-def inferTypeErrorProgram := r"
-procedure foo()
-  opaque
+def transparentBodyProgram := r"
+procedure transparentBody()
+//        ^^^^^^^^^^^^^^^ error: transparent statement bodies are not supported
 {
-  <?>
-//^^^ error: could not infer type
+  assert true
 };
 "
 
 #guard_msgs(drop info, error) in
-#eval testInputWithOffset "InferTypeError" inferTypeErrorProgram 14 processLaurelFile
+#eval testInputWithOffset "TransparentBody" transparentBodyProgram 14 processLaurelFile
+
+end Laurel
