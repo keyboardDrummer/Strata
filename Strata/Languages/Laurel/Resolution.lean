@@ -475,6 +475,10 @@ def resolveProcedure (proc : Procedure) : ResolveM Procedure := do
     let pres' ← proc.preconditions.mapM (·.mapM resolveStmtExpr)
     let dec' ← proc.decreases.mapM resolveStmtExpr
     let body' ← resolveBody proc.body
+    if !proc.isFunctional && body'.isTransparent then
+      let diag := proc.name.md.toDiagnostic
+        s!"transparent statement bodies are not supported. Add 'opaque' to make the procedure opaque"
+      modify fun s => { s with errors := s.errors.push diag }
     let invokeOn' ← proc.invokeOn.mapM resolveStmtExpr
     let axioms' ← proc.axioms.mapM resolveStmtExpr
     return { name := procName', inputs := inputs', outputs := outputs',
