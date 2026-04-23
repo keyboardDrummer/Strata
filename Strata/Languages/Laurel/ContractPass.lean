@@ -87,39 +87,33 @@ private def mkConditionProc (name : String) (params : List Parameter)
     isFunctional := true
     body := .Transparent (conjoin (conditions.map (·.condition))) }
 
-/-- Build a postcondition procedure that takes only the *input* parameters
-    and internally calls the original procedure to obtain the outputs.
+/-- Build a postcondition function that takes both input and output parameters
+    and returns the conjunction of postconditions.
 
     For a procedure `foo(a, b) returns (x, y)` with postcondition `P(a, b, x, y)`,
     generates:
     ```
-    procedure foo$post(a, b) returns ($result : bool) {
-      var x, y : Tx := foo(a, b);
+    function foo$post(a, b, x, y) returns ($result : bool) {
       P(a, b, x, y)
     }
     ```
 
-    This ensures the `assume` at call sites only references pre-call arguments,
-    avoiding a soundness issue where mutable variables (e.g. `$heap`) are
-    overwritten by the call's result destructuring before the `assume` is
-    evaluated. -/
-private def mkPostConditionProc (name : String) (originalProcName : String)
+    At call sites, the assume is placed *after* the assignment so that the
+    output variables are bound:
+    ```
+    var x, y := foo(a_saved, b_saved);
+    assume foo$post(a_saved, b_saved, x, y);
+    ``` -/
+private def mkPostConditionProc (name : String) (_originalProcName : String)
     (inputParams : List Parameter) (outputParams : List Parameter)
     (conditions : List Condition) : Procedure :=
-  let inputArgs := paramsToArgs inputParams
-  let callExpr := mkMd (.StaticCall (mkId originalProcName) inputArgs)
-  let targets := outputParams.map fun p => mkVarMd (.Declare ⟨p.name, p.type⟩)
-  let assignStmt := mkMd (.Assign targets callExpr)
-  -- Body: assign call result to output params, then postcondition conjunction
-  let bodyStmts := [assignStmt, conjoin (conditions.map (·.condition))]
-  let body := mkMd (.Block bodyStmts none)
   { name := mkId name
-    inputs := inputParams
+    inputs := inputParams ++ outputParams
     outputs := [⟨mkId "$result", { val := .TBool, source := none }⟩]
     preconditions := []
     decreases := none
-    isFunctional := false
-    body := .Transparent body }
+    isFunctional := true
+    body := .Transparent (conjoin (conditions.map (·.condition))) }
 
 /-- Extract a combined summary from a list of conditions. -/
 private def combinedSummary (clauses : List Condition) : Option String :=
@@ -198,11 +192,20 @@ private def transformProcBody (proc : Procedure) (info : ContractInfo) : Body :=
     .Opaque [] (some ⟨ .Block [] none, none, emptyMd⟩)  []
   | b => b
 
+/-- Convert assignment targets to variable reference expressions. -/
+private def targetsToArgs (targets : List (AstNode Variable)) : List StmtExprMd :=
+  targets.map fun t =>
+    let name := match t.val with
+      | .Local n => n
+      | .Declare p => p.name
+      | .Field _ n => n  -- best effort
+    mkMd (.Var (.Local name))
+
 /-- Rewrite a single statement that may be a call to a contracted procedure.
     Returns a list of statements (the original plus any inserted assert/assume).
     Uses the call site's metadata for generated assert/assume nodes.
-    The postcondition assume passes only the call arguments (not the results),
-    since the $post procedure internally calls the original to obtain outputs. -/
+    The postcondition assume is placed after the assignment and passes both
+    the call arguments and the assigned target variables. -/
 private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
     (e : StmtExprMd) : List StmtExprMd :=
   let md := e.md
@@ -211,17 +214,16 @@ private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
   let mkWithMdSummary (se : StmtExpr) (summary : String) : StmtExprMd :=
     ⟨se, src, md.withPropertySummary summary⟩
   match e.val with
-  | .Assign _targets (.mk (.StaticCall callee args) ..) =>
+  | .Assign targets (.mk (.StaticCall callee args) ..) =>
     match contractInfoMap.get? callee.text with
     | some info =>
       let preAssert := if info.hasPreCondition
         then [mkWithMdSummary (.Assert { condition := mkCall info.preName args, summary := info.preSummary }) (info.preSummary.getD "precondition")] else []
-      -- Assume $post *before* the assignment so that args still reference
-      -- pre-call values (e.g. $heap before it is overwritten by the call result).
-      -- The $post procedure internally calls the original to obtain outputs.
+      -- Assume $post *after* the assignment, passing both the call arguments
+      -- and the assigned target variables so the postcondition can reference outputs.
       let postAssume := if info.hasPostCondition
-        then [mkWithMd (.Assume (mkCall info.postName args))] else []
-      preAssert ++ postAssume ++ [e]
+        then [mkWithMd (.Assume (mkCall info.postName (args ++ targetsToArgs targets)))] else []
+      preAssert ++ [e] ++ postAssume
     | none => [e]
   | .StaticCall callee args =>
     match contractInfoMap.get? callee.text with

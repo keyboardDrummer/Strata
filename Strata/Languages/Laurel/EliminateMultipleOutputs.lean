@@ -72,8 +72,8 @@ private def isAssume (stmt : StmtExprMd) : Bool :=
 
 /-- Rewrite a single multi-output Assign into a temp declaration + destructuring
     assignments. Any `Assume` statements from `following` that appear immediately
-    after the call are collected and placed between the temp declaration and the
-    destructuring assignments, so they observe the pre-call variable values.
+    after the call are collected and placed after the destructuring assignments,
+    so they observe the post-call variable values.
     Returns the rewritten statements and the number of consumed following statements. -/
 private def rewriteAssign (infoMap : Std.HashMap String MultiOutInfo)
     (targets : List VariableMd) (callee : Identifier) (args : List StmtExprMd)
@@ -90,18 +90,18 @@ private def rewriteAssign (infoMap : Std.HashMap String MultiOutInfo)
           (mkMd (.StaticCall (mkId (destructorName info i))
             [mkMd (.Var (.Local (mkId tempName)))])))
       -- Collect any Assume statements that immediately follow the call.
-      -- These must be placed before the destructuring assignments so they
-      -- observe the pre-call values of variables like $heap.
+      -- These are placed after the destructuring assignments so they
+      -- observe the post-call values of output variables.
       let assumes := following.takeWhile isAssume
       let consumed := assumes.length
-      some (tempDecl :: assumes ++ assigns, consumed)
+      some (tempDecl :: assigns ++ assumes, consumed)
     else none
   | none => none
 
 /-- Rewrite a statement list, replacing multi-output call patterns.
     When a multi-output Assign is followed by Assume statements (inserted by
-    the contract pass), the Assumes are hoisted before the destructuring
-    assignments so they reference pre-call variable values. -/
+    the contract pass), the Assumes are placed after the destructuring
+    assignments so they reference post-call variable values. -/
 private def rewriteStmts (infoMap : Std.HashMap String MultiOutInfo)
     (stmts : List StmtExprMd) : List StmtExprMd :=
   let rec go (remaining : List StmtExprMd) (acc : List StmtExprMd) (counter : Nat) : List StmtExprMd :=
