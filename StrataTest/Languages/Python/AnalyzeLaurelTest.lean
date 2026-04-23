@@ -90,12 +90,12 @@ private meta def runAnalyze
     | .ok r => pure r
     | .error err => return .error (toString err)
   match ← Strata.translateCombinedLaurel laurel with
-  | (some core, []) =>
+  | (some core, _) =>
     -- Also run Core type checking to catch semantic errors (e.g. Heap vs Any)
     match Core.typeCheck Core.VerifyOptions.quiet core (moreFns := Strata.Python.ReFactory) with
     | .error diag => return .error s!"Core type checking failed: {diag}"
     | .ok _ => return .ok core
-  | (_, errors) => return .error s!"Laurel to Core translation failed: {errors}"
+  | (none, errors) => return .error s!"Laurel to Core translation failed: {errors}"
 
 /-- Run pyAnalyzeLaurel with inlining and verification.
     When `useRoots` is true, entry points are determined via the call graph
@@ -302,10 +302,9 @@ Expected output (when Python + z3 available):
     | .ok vcResults =>
       let mut foundAlwaysFalse := false
       for r in vcResults do
-        if r.obligation.label.startsWith "servicelib_Storage_" then
-          let line := r.formatOutcome
-          if (line.splitOn "✖️").length != 1 then
-            foundAlwaysFalse := true
+        let line := r.formatOutcome
+        if (line.splitOn "✖️").length != 1 then
+          foundAlwaysFalse := true
       if !foundAlwaysFalse then
         throw <| IO.userError
           "Expected ✖️ always false for regex violation"
@@ -327,10 +326,9 @@ assertion. This exercises the full pipeline with type alias resolution.
     | .ok vcResults =>
       let mut foundAlwaysFalse := false
       for r in vcResults do
-        if r.obligation.label.startsWith "servicelib_Storage_" then
-          let line := r.formatOutcome
-          if (line.splitOn "✖️").length != 1 then
-            foundAlwaysFalse := true
+        let line := r.formatOutcome
+        if (line.splitOn "✖️").length != 1 then
+          foundAlwaysFalse := true
       if !foundAlwaysFalse then
         throw <| IO.userError
           "Expected ✖️ always false for empty bucket violation"
