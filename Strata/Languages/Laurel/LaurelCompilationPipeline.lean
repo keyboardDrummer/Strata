@@ -188,10 +188,10 @@ private def runLaurelPasses (options : LaurelTranslateOptions) (program : Progra
       model := result.model
     emit pass.name "laurel.st" program
 
-  let program := eliminateReturnStatements program
+  program := eliminateReturnStatements program
   emit "EliminateReturnStatements" "laurel.st" program
 
-  let program := contractPass program
+  program := contractPass program
 
   -- Check if the pipeline introduced new resolution errors that weren't present initially.
   -- This catches bugs where a pass produces unresolvable names, which would silently
@@ -207,7 +207,7 @@ private def runLaurelPasses (options : LaurelTranslateOptions) (program : Progra
         DiagnosticType.StrataBug]
     else []
 
-  let allDiags := allDiags ++ newResolutionErrors
+  allDiags := allDiags ++ newResolutionErrors
   return (program, model, allDiags, allStats)
 
 /--
@@ -256,7 +256,7 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
 
   let coreWithLaurelTypes := orderFunctionsAndProofs unorderedCore
   if ! passDiags.isEmpty then
-    return (none, passDiags, program)
+    return (none, passDiags, program, {})
   else
     let initState : TranslateState := { model := fnModel, overflowChecks := options.overflowChecks }
     let (coreProgramOption, translateState) :=

@@ -28,6 +28,7 @@ private def returnLabel : String := "$return"
 private def emptyMd : MetaData := .empty
 
 private def mkMd (e : StmtExpr) : StmtExprMd := { val := e, source := none }
+private def mkVarMd (v : Variable) : VariableMd := { val := v, source := none }
 
 /-- Replace `Return val` with `output := val; exit "$return"` (or just `exit`
     for valueless returns). Uses `mapStmtExpr` for bottom-up traversal. -/
@@ -37,7 +38,7 @@ private def replaceReturn (outputs : List Parameter) (expr : StmtExprMd) : StmtE
     | .Return (some val) =>
       match outputs with
       | [out] =>
-        let assign := mkMd (.Assign [mkMd (.Identifier out.name)] val)
+        let assign := mkMd (.Assign [mkVarMd (.Local out.name)] val)
         let exit := mkMd (.Exit returnLabel)
         ⟨.Block [assign, exit] none, e.source, e.md⟩
       | _ => mkMd (.Exit returnLabel)

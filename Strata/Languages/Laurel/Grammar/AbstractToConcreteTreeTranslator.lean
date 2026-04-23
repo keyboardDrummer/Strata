@@ -9,7 +9,6 @@ public import Strata.DDM.AST
 public import Strata.DDM.Format
 public import Strata.Languages.Laurel.Grammar.LaurelGrammar
 public import Strata.Languages.Laurel.Laurel
-public import Strata.Languages.Laurel.TransparencyPass
 
 namespace Strata
 namespace Laurel
@@ -100,7 +99,6 @@ where
       match label with
       | none => laurelOp "block" #[semicolonSep stmtArgs]
       | some l => laurelOp "labelledBlock" #[semicolonSep stmtArgs, ident l]
-
     | .Var (.Declare param) =>
       let typeOpt := optionArg (some (laurelOp "typeAnnotation" #[highTypeToArg param.type]))
       let initOpt := optionArg none
@@ -109,7 +107,6 @@ where
       let typeOpt := optionArg (some (laurelOp "typeAnnotation" #[highTypeToArg param.type]))
       let initOpt := optionArg (some (laurelOp "initializer" #[stmtExprToArg value]))
       laurelOp "varDecl" #[ident param.name.text, typeOpt, initOpt]
-
     | .Assign targets value =>
       if targets.length > 1 then
         let targetArgs := targets.map fun t =>
@@ -211,7 +208,9 @@ private def ensuresClauseToArg (c : Condition) : Arg :=
   laurelOp "ensuresClause" #[stmtExprToArg c.condition, errOpt]
 
 private def modifiesClauseToArg (modifies : List StmtExprMd) : Arg :=
-  if modifies.any (fun e => match e.val with | .All => true | _ => false) then
+  -- Check if any modifier is a wildcard (.All)
+  let isWildcard (e : StmtExprMd) : Bool := match e.val with | .All => true | _ => false
+  if modifies.any isWildcard then
     laurelOp "modifiesWildcard" #[]
   else
     let refs := modifies.map stmtExprToArg |>.toArray
@@ -239,21 +238,19 @@ private def procedureToOp (proc : Procedure) : Strata.Operation :=
   let requiresArgs := proc.preconditions.map requiresClauseToArg |>.toArray
   let invokeOnArg := optionArg (proc.invokeOn.map fun e =>
     laurelOp "invokeOnClause" #[stmtExprToArg e])
-  let (opaqueSpecArg, bodyArg) := match proc.body with
+  let (ensuresArgs, modifiesArgs, bodyArg) := match proc.body with
     | .Transparent body =>
-      (optionArg none, optionArg (some (laurelOp "body" #[stmtExprToArg body])))
+      (#[], #[], optionArg (some (laurelOp "body" #[stmtExprToArg body])))
     | .Opaque postconds impl modifies =>
       let ens := postconds.map ensuresClauseToArg |>.toArray
       let mods := if modifies.isEmpty then #[] else #[modifiesClauseToArg modifies]
-      let opaqueOp := laurelOp "opaqueSpec" #[seqArg ens, seqArg mods]
       let body := optionArg (impl.map fun e => laurelOp "body" #[stmtExprToArg e])
-      (optionArg (some opaqueOp), body)
+      (ens, mods, body)
     | .Abstract postconds =>
       let ens := postconds.map ensuresClauseToArg |>.toArray
-      let opaqueOp := laurelOp "opaqueSpec" #[seqArg ens, seqArg #[]]
-      (optionArg (some opaqueOp), optionArg none)
+      (ens, #[], optionArg none)
     | .External =>
-      (optionArg none, optionArg (some (laurelOp "externalBody")))
+      (#[], #[], optionArg (some (laurelOp "externalBody")))
   { ann := sr
     name := { dialect := "Laurel", name := opName }
     args := #[
@@ -263,7 +260,8 @@ private def procedureToOp (proc : Procedure) : Strata.Operation :=
       returnParamsArg,
       seqArg requiresArgs,
       invokeOnArg,
-      opaqueSpecArg,
+      seqArg ensuresArgs,
+      seqArg modifiesArgs,
       bodyArg
     ] }
 
@@ -410,17 +408,6 @@ instance : Std.ToFormat VariableMd where format := formatVariableMd
 instance : Std.ToFormat Constant where format := formatConstant
 instance : Std.ToFormat TypeDefinition where format := formatTypeDefinition
 instance : Std.ToFormat Program where format := formatProgram
-
-def formatUnorderedCoreWithLaurelTypes (p : UnorderedCoreWithLaurelTypes) : Format :=
-  let sections : List Format :=
-    (p.datatypes.map formatDatatypeDefinition) ++
-    (p.constants.map formatConstant) ++
-    (p.functions.map formatProcedure) ++
-    (p.coreProcedures.map fun (proc, _) => formatProcedure proc)
-  Std.Format.joinSep sections "\n\n"
-
-instance : Std.ToFormat UnorderedCoreWithLaurelTypes where
-  format := formatUnorderedCoreWithLaurelTypes
 
 instance : Repr StmtExpr where
   reprPrec r _ := s!"{Std.format r}"

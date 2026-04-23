@@ -73,10 +73,10 @@ private def rewriteCallsToFunctional (nonExternalNames : List String) (expr : St
       `r == foo$asFunction(a, b)` -/
 private def mkFreePostcondition (proc : Procedure) : StmtExprMd :=
   let funcName := { proc.name with text := proc.name.text ++ "$asFunction", uniqueId := none }
-  let inputArgs := proc.inputs.map fun p => mkMd (.Identifier p.name)
+  let inputArgs := proc.inputs.map fun p => mkMd (.Var (.Local p.name))
   let funcCall := mkMd (.StaticCall funcName inputArgs)
   match proc.outputs with
-  | [out] => mkMd (.PrimitiveOp .Eq [mkMd (.Identifier out.name), funcCall])
+  | [out] => mkMd (.PrimitiveOp .Eq [mkMd (.Var (.Local out.name)), funcCall])
   | _ => mkMd (.LiteralBool true)
 
 /-- Create the function copy of a procedure (suffixed `$asFunction`).

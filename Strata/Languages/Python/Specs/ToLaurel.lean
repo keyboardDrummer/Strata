@@ -516,7 +516,7 @@ def buildSpecPreconditions (preconditions : Array Assertion)
     (md : Imperative.MetaData Core.Expression)
     (ctx : SpecExprContext)
     (requiredParams : Array String := #[])
-    : ToLaurelM (List StmtExprMd × Body) := do
+    : ToLaurelM (List Condition × Body) := do
   let mut preconds : Array Condition := #[]
   let mut idx := 0
   -- Required parameters: not None
