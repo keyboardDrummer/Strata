@@ -14,6 +14,7 @@ namespace Laurel
 
 def inferTypeErrorProgram := r"
 procedure foo()
+  opaque
 {
   <?>
 //^^^ error: could not infer type

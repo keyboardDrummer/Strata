@@ -42,7 +42,7 @@ procedure fooProof()
 //  assert x == y;
 };
 
-procedure aFunction(x: int): int
+function aFunction(x: int): int
 {
   x
 };

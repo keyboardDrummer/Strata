@@ -220,7 +220,7 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
     (keepAllFilesPrefix : Option String := none)
     : IO TranslateResultWithLaurel :=
   runPipelineM keepAllFilesPrefix do
-  let (program, model, passDiags, _stats) ← runLaurelPasses options program
+  let (program, model, passDiags, stats) ← runLaurelPasses options program
   let unorderedCore := transparencyPass program
   let unorderedCore := eliminateMultipleOutputs unorderedCore
   let unorderedCore := inlineLocalVariablesInExpressions unorderedCore
@@ -256,7 +256,7 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
 
   let coreWithLaurelTypes := orderFunctionsAndProofs unorderedCore
   if ! passDiags.isEmpty then
-    return (none, passDiags, program, {})
+    return (none, passDiags, program, stats)
   else
     let initState : TranslateState := { model := fnModel, overflowChecks := options.overflowChecks }
     let (coreProgramOption, translateState) :=
@@ -274,7 +274,7 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
 
     let coreProgramOption :=
       if translateState.coreProgramHasSuperfluousErrors then none else coreProgramOption
-    return (coreProgramOption, allDiagnostics, program, {})
+    return (coreProgramOption, allDiagnostics, program, stats)
 
 /--
 Translate Laurel Program to Core Program.

@@ -152,6 +152,7 @@ procedure datatypeField() opaque {
 // }
 
 procedure modifyHeapAndReturnMultiple(c: Container) returns (x: int, y: int, z: int)
+  opaque
   ensures x == 1 && y == 2 && z == 3
   modifies c
 ;
