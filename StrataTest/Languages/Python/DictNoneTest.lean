@@ -94,9 +94,6 @@ def main() -> None:
 
 -- Test 6: len() on a class instance without __len__.
 -- This should be rejected as a user error.
-/--
-error: pythonAndSpecToLaurel failed: User code error: len() is not supported on 'MyObj' (no __len__ method)
--/
 #guard_msgs in
 #eval withPython (warnOnSkip := false) fun pythonCmd => do
   let program :=
@@ -109,6 +106,11 @@ def main() -> None:
     obj: MyObj = MyObj(\"test\")
     n: int = len(obj)
 "
-  let _diags ← processPythonFile pythonCmd (stringInputContext "test.py" program)
+  let expectedMsg := "len() is not supported on 'MyObj' (no __len__ method)"
+  match ← processPythonFile pythonCmd (stringInputContext "test.py" program) |>.toBaseIO with
+  | .ok _ => throw <| .userError s!"Expected error containing '{expectedMsg}', but succeeded"
+  | .error e =>
+    unless containsSubstr (toString e) expectedMsg do
+      throw <| .userError s!"Expected error containing '{expectedMsg}', got: {e}"
 
 end Strata.Python.DictNoneTest
