@@ -106,8 +106,11 @@ def main() -> None:
     obj: MyObj = MyObj(\"test\")
     n: int = len(obj)
 "
-  let diags ← processPythonFile pythonCmd (stringInputContext "test.py" program)
-  if diags.size == 0 then
-    throw <| .userError s!"Expected ≥1 diagnostic for len() on Composite, got 0"
+  let expectedMsg := "len() is not supported on 'MyObj' (no __len__ method)"
+  match ← processPythonFile pythonCmd (stringInputContext "test.py" program) |>.toBaseIO with
+  | .ok _ => throw <| .userError s!"Expected error containing '{expectedMsg}', but succeeded"
+  | .error e =>
+    unless containsSubstr (toString e) expectedMsg do
+      throw <| .userError s!"Expected error containing '{expectedMsg}', got: {e}"
 
 end Strata.Python.DictNoneTest
