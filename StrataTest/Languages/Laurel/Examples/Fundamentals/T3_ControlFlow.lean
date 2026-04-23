@@ -13,7 +13,16 @@ open Strata
 namespace Strata.Laurel
 
 def program := r"
-function returnAtEnd(x: int) returns (r: int) {
+function assertAndAssumeInFunctions(a: int) returns (r: int)
+{
+  assert 2 == 3;
+//^^^^^^^^^^^^^ error: assertion does not hold
+  assume true;
+  a
+};
+
+function returnAtEnd(x: int) returns (r: int)
+{
   if x > 0 then {
     if x == 1 then {
       return 1
@@ -25,11 +34,13 @@ function returnAtEnd(x: int) returns (r: int) {
   }
 };
 
-function elseWithCall(): int {
+function elseWithCall(): int
+{
   if true then 3 else returnAtEnd(3)
 };
 
-function guardInFunction(x: int) returns (r: int) {
+function guardInFunction(x: int) returns (r: int)
+{
   if x > 0 then {
     if x == 1 then {
       return 1

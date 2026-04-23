@@ -67,20 +67,17 @@ procedure updatesAndAliasing()
   assert dAlias#intValue == d#intValue
 };
 
-procedure subsequentHeapMutations(c: Container)
-  opaque
-  modifies c
-{
+procedure subsequentHeapMutations() opaque {
+  var c: Container := new Container;
+
   // The additional parenthesis on the next line are needed to let the parser succeed. Joe, any idea why this is needed?
   var sum: int := ((c#intValue := 1) + c#intValue) + (c#intValue := 2);
   assert sum == 4
 };
 
-procedure implicitEquality(c: Container, d: Container)
-  opaque
-  modifies c
-  modifies d
-{
+procedure implicitEquality() opaque {
+  var c: Container := new Container;
+  var d: Container := new Container;
   c#intValue := 1;
   d#intValue := 2;
   if c#intValue == d#intValue then {
@@ -101,11 +98,9 @@ composite SameFieldName {
   var intValue: bool
 }
 
-procedure sameFieldNameDifferentType(a: Container, b: SameFieldName)
-  opaque
-  modifies a
-  modifies b
-{
+procedure sameFieldNameDifferentType() opaque {
+  var a: Container := new Container;
+  var b: SameFieldName := new SameFieldName;
   a#intValue := 1;
   b#intValue := true;
 
@@ -124,9 +119,7 @@ composite Pixel {
   var color: Color
 }
 
-procedure datatypeField()
-  opaque
-{
+procedure datatypeField() opaque {
   var p: Pixel := new Pixel;
   p#color := Red();
   assert Color..isRed(p#color);
@@ -157,6 +150,29 @@ procedure datatypeField()
 //   assert d#intValue == 1;
 //   assert x == 4;
 // }
+
+procedure modifyHeapAndReturnMultiple(c: Container) returns (x: int, y: int, z: int)
+  ensures x == 1 && y == 2 && z == 3
+  modifies c
+;
+
+procedure heapModifyingMultipleReturnCaller() {
+  var c: Container := new Container;
+  var y: int;
+  assign var x: int, y, var z: int := modifyHeapAndReturnMultiple(c);
+  assert x == 1;
+  assert y == 2;
+  assert z == 3
+};
+
+procedure fieldAssignsFromHeapModifyingMultipleReturnCaller() {
+  var c: Container := new Container;
+  var y: int;
+  assign c#intValue, y, var z: int := modifyHeapAndReturnMultiple(c);
+  assert c#intValue == 1;
+  assert y == 2;
+  assert z == 3
+};
 "#
 
 #guard_msgs(drop info, error) in

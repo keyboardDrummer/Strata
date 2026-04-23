@@ -33,7 +33,7 @@ happens after Phase 1, the `ResolvedNode` values in the map contain the fully
 resolved sub-trees (e.g. a procedure's parameters already have their IDs).
 
 ### Definition nodes (introduce a name into scope)
-- `StmtExpr.LocalVariable` — local variable declaration
+- `Variable.Declare` — local variable declaration (in `Assign` targets or `Var`)
 - `StmtExpr.Forall` / `StmtExpr.Exists` — quantifier-bound variable
 - `Parameter` — procedure parameter
 - `Procedure` — procedure definition
@@ -43,10 +43,10 @@ resolved sub-trees (e.g. a procedure's parameters already have their IDs).
 - `Constant` — named constant
 
 ### Reference nodes (use a name)
-- `StmtExpr.Identifier` — variable reference
+- `StmtExpr.Var (.Local ...)` — variable reference
 - `StmtExpr.StaticCall` — static procedure call
 - `StmtExpr.InstanceCall` — instance method call
-- `StmtExpr.FieldSelect` — field access
+- `StmtExpr.Var (.Field ...)` — field access
 - `StmtExpr.New` — object creation (references a type)
 - `StmtExpr.Exit` — exit a labelled block
 - `HighType.UserDefined` — type reference
@@ -103,8 +103,10 @@ def ResolvedNode.getType (node: ResolvedNode): HighTypeMd := match node with
  | .constant c => c.type
  | .quantifierVar _ type => type
  | .unresolved =>
-    -- The Python through Laurel pipeline does not resolve yet
-    ⟨ .UserDefined "dummyName", none, default ⟩
+   -- Expected when a reference failed to resolve (a diagnostic was already emitted
+   -- by resolveRef or defineNameCheckDup). Returning Unknown propagates the error
+   -- gracefully through type translation.
+   ⟨ .Unknown, none, default ⟩
  | _ => dbg_trace s!"SOUND BUG: getType called on {repr node}"; ⟨ HighType.Unknown, none, default ⟩
 
 /-! ## Resolution result -/
@@ -117,8 +119,15 @@ structure SemanticModel where
 
 def SemanticModel.get (model: SemanticModel) (iden: Identifier): ResolvedNode :=
   match iden.uniqueId with
-  | some key => (model.refToDef.get? key).getD default
-  | none => default
+  | some key =>
+    match model.refToDef.get? key with
+    | some node => node
+    | none =>
+      -- An ID was assigned during Phase 1 but the reference was never registered in
+      -- Phase 2 (buildRefToDef). This is a bug in the resolution pass itself.
+      dbg_trace s!"SOUND BUG: identifier '{iden.text}' (id={key}) has a uniqueId but is missing from refToDef"
+      .unresolved
+  | none => .unresolved
 
 def SemanticModel.isFunction (model: SemanticModel) (id: Identifier): Bool :=
   match model.get id with
@@ -182,8 +191,11 @@ def defineName (iden : Identifier) (node : ResolvedNode) (overrideResolutionName
   let (name', uniqueId) ← match iden.uniqueId with
     | some uid => pure (iden, uid)
     | none =>
-      let id ← freshId
-      pure ({ iden with uniqueId := some (id) }, id)
+      match (← get).scope.get? resolutionName with
+      | some (existingId, _) => pure ({ iden with uniqueId := some existingId }, existingId)
+      | none =>
+        let id ← freshId
+        pure ({ iden with uniqueId := some (id) }, id)
 
   modify fun s => { s with scope := s.scope.insert resolutionName (uniqueId, node),
                            currentScopeNames := s.currentScopeNames.insert resolutionName }
@@ -217,7 +229,7 @@ def resolveRef (name : Identifier) (md : Imperative.MetaData Core.Expression := 
 private def targetTypeName (target : StmtExprMd) : ResolveM (Option String) := do
   let s ← get
   match target.val with
-  | .Identifier ref =>
+  | .Var (.Local ref) =>
     match s.scope.get? ref.text with
     | some (_, node) =>
       match node.getType.val with
@@ -309,11 +321,6 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
     withScope do
       let stmts' ← stmts.mapM resolveStmtExpr
       pure (.Block stmts' label)
-  | .LocalVariable name ty init =>
-    let ty' ← resolveHighType ty
-    let init' ← init.attach.mapM (fun a => have := a.property; resolveStmtExpr a.val)
-    let name' ← defineNameCheckDup name (.var name ty')
-    pure (.LocalVariable name' ty' init')
   | .While cond invs dec body =>
     let cond' ← resolveStmtExpr cond
     let invs' ← invs.attach.mapM (fun a => have := a.property; resolveStmtExpr a.val)
@@ -328,17 +335,35 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
   | .LiteralBool v => pure (.LiteralBool v)
   | .LiteralString v => pure (.LiteralString v)
   | .LiteralDecimal v => pure (.LiteralDecimal v)
-  | .Identifier ref =>
+  | .Var (.Local ref) =>
     let ref' ← resolveRef ref coreMd
-    pure (.Identifier ref')
+    pure (.Var (.Local ref'))
+  | .Var (.Declare param) =>
+    let ty' ← resolveHighType param.type
+    let name' ← defineNameCheckDup param.name (.var param.name ty')
+    pure (.Var (.Declare ⟨name', ty'⟩))
   | .Assign targets value =>
-    let targets' ← targets.mapM resolveStmtExpr
+    let targets' ← targets.attach.mapM fun ⟨v, _⟩ => do
+      let ⟨vv, vs, vm⟩ := v
+      let coreMd := fileRangeToCoreMd vs vm
+      match vv with
+      | .Local ref =>
+        let ref' ← resolveRef ref coreMd
+        pure (⟨.Local ref', vs, vm⟩ : VariableMd)
+      | .Field target fieldName =>
+        let target' ← resolveStmtExpr target
+        let fieldName' ← resolveFieldRef target' fieldName coreMd
+        pure (⟨.Field target' fieldName', vs, vm⟩ : VariableMd)
+      | .Declare param =>
+        let ty' ← resolveHighType param.type
+        let name' ← defineNameCheckDup param.name (.var param.name ty')
+        pure (⟨.Declare ⟨name', ty'⟩, vs, vm⟩ : VariableMd)
     let value' ← resolveStmtExpr value
     pure (.Assign targets' value')
-  | .FieldSelect target fieldName =>
+  | .Var (.Field target fieldName) =>
     let target' ← resolveStmtExpr target
     let fieldName' ← resolveFieldRef target' fieldName coreMd
-    pure (.FieldSelect target' fieldName')
+    pure (.Var (.Field target' fieldName'))
   | .PureFieldUpdate target fieldName newVal =>
     let target' ← resolveStmtExpr target
     let fieldName' ← resolveFieldRef target' fieldName coreMd
@@ -455,10 +480,12 @@ def resolveProcedure (proc : Procedure) : ResolveM Procedure := do
         s!"transparent statement bodies are not supported. Add 'opaque' to make the procedure opaque"
       modify fun s => { s with errors := s.errors.push diag }
     let invokeOn' ← proc.invokeOn.mapM resolveStmtExpr
+    let axioms' ← proc.axioms.mapM resolveStmtExpr
     return { name := procName', inputs := inputs', outputs := outputs',
              isFunctional := proc.isFunctional,
              preconditions := pres', decreases := dec',
              invokeOn := invokeOn',
+             axioms := axioms',
              body := body' }
 
 /-- Resolve a field: define its name under the qualified key (OwnerType.fieldName) and resolve its type. -/
@@ -485,10 +512,12 @@ def resolveInstanceProcedure (typeName : Identifier) (proc : Procedure) : Resolv
       modify fun s => { s with errors := s.errors.push diag }
     let invokeOn' ← proc.invokeOn.mapM resolveStmtExpr
     modify fun s => { s with instanceTypeName := savedInstType }
+    let axioms' ← proc.axioms.mapM resolveStmtExpr
     return { name := procName', inputs := inputs', outputs := outputs',
              isFunctional := proc.isFunctional,
              preconditions := pres', decreases := dec',
              invokeOn := invokeOn',
+             axioms := axioms',
              body := body' }
 
 /-- Resolve a type definition. -/
@@ -593,23 +622,25 @@ private def collectStmtExpr (map : Std.HashMap Nat ResolvedNode) (expr : StmtExp
     | some e => collectStmtExpr map e
     | none => map
   | .Block stmts _ => stmts.foldl collectStmtExpr map
-  | .LocalVariable name ty init =>
-    let map := register map name (.var name ty)
-    let map := collectHighType map ty
-    match init with
-    | some i => collectStmtExpr map i
-    | none => map
   | .While cond invs dec body =>
     let map := collectStmtExpr map cond
     let map := invs.foldl collectStmtExpr map
     let map := match dec with | some d => collectStmtExpr map d | none => map
     collectStmtExpr map body
   | .Return val => match val with | some v => collectStmtExpr map v | none => map
-  | .Identifier _ => map
+  | .Var (.Local _) => map
+  | .Var (.Declare param) =>
+    let map := register map param.name (.var param.name param.type)
+    collectHighType map param.type
   | .Assign targets value =>
-    let map := targets.foldl collectStmtExpr map
+    let map := targets.foldl (fun map t =>
+      match t.val with
+      | .Declare param =>
+        let map := register map param.name (.var param.name param.type)
+        collectHighType map param.type
+      | _ => map) map
     collectStmtExpr map value
-  | .FieldSelect target _ => collectStmtExpr map target
+  | .Var (.Field target _) => collectStmtExpr map target
   | .PureFieldUpdate target _ newVal =>
     let map := collectStmtExpr map target
     collectStmtExpr map newVal
@@ -763,8 +794,18 @@ private def preRegisterTopLevel (program : Program) : ResolveM Unit := do
 
 /-- Run the full resolution pass on a Laurel program. -/
 def resolve (program : Program) (existingModel: Option SemanticModel := none) : ResolutionResult :=
+
   -- Phase 1: pre-register all top-level names, then assign IDs and resolve references
   let phase1 : ResolveM Program := do
+
+    for td in program.types do
+      if let .Composite ct := td then
+        for proc in ct.instanceProcedures do
+          let diag := proc.name.md.toDiagnostic
+            s!"Instance procedure '{proc.name.text}' on composite type '{ct.name.text}' is not yet supported"
+            DiagnosticType.NotYetImplemented
+          modify fun s => { s with errors := s.errors.push diag }
+
     preRegisterTopLevel program
     let types' ← program.types.mapM resolveTypeDefinition
     let constants' ← program.constants.mapM resolveConstant
