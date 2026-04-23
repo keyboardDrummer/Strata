@@ -119,7 +119,7 @@ private def mkPostConditionProc (name : String) (originalProcName : String)
     preconditions := []
     decreases := none
     isFunctional := false
-    body := .Opaque [] (some body) [] }
+    body := .Transparent body }
 
 /-- Extract a combined summary from a list of conditions. -/
 private def combinedSummary (clauses : List Condition) : Option String :=

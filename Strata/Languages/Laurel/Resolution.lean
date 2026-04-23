@@ -475,7 +475,7 @@ def resolveProcedure (proc : Procedure) : ResolveM Procedure := do
     let pres' ← proc.preconditions.mapM (·.mapM resolveStmtExpr)
     let dec' ← proc.decreases.mapM resolveStmtExpr
     let body' ← resolveBody proc.body
-    if !proc.isFunctional && body'.isTransparent then
+    if !proc.isFunctional && body'.isTransparent && !proc.name.text.any (· == '$') then
       let diag := proc.name.md.toDiagnostic
         s!"transparent statement bodies are not supported. Add 'opaque' to make the procedure opaque"
       modify fun s => { s with errors := s.errors.push diag }
@@ -506,7 +506,7 @@ def resolveInstanceProcedure (typeName : Identifier) (proc : Procedure) : Resolv
     let pres' ← proc.preconditions.mapM (·.mapM resolveStmtExpr)
     let dec' ← proc.decreases.mapM resolveStmtExpr
     let body' ← resolveBody proc.body
-    if !proc.isFunctional && body'.isTransparent then
+    if !proc.isFunctional && body'.isTransparent && !proc.name.text.any (· == '$') then
       let diag := proc.name.md.toDiagnostic
         s!"transparent statement bodies are not supported. Add 'opaque' to make the procedure opaque"
       modify fun s => { s with errors := s.errors.push diag }

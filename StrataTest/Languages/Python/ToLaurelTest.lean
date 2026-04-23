@@ -493,7 +493,7 @@ body contains FieldSelect: false
   assert! result.errors.size = 0
   match result.program.staticProcedures with
   | proc :: _ =>
-    let precondStr := proc.preconditions.map (fun p => toString (Strata.Laurel.formatStmtExpr p))
+    let precondStr := proc.preconditions.map (fun (p : Strata.Laurel.Condition) => toString (Strata.Laurel.formatStmtExpr p.condition))
       |> String.intercalate ", "
     let bodyStr := match proc.body with
       | .Transparent body => toString (Strata.Laurel.formatStmtExpr body)
@@ -733,7 +733,7 @@ private def translatePrecond (preconditions : Array Assertion)
   let result := translatePrecondResult preconditions args
   let precondStr := match result.program.staticProcedures with
     | proc :: _ =>
-      let formatted := proc.preconditions.map (fun p => toString (Strata.Laurel.formatStmtExpr p))
+      let formatted := proc.preconditions.map (fun (p : Strata.Laurel.Condition) => toString (Strata.Laurel.formatStmtExpr p.condition))
       if formatted.isEmpty then getBody result |>.getD ""
       else "{ " ++ (String.intercalate "; " formatted) ++ " }"
     | [] => ""
@@ -783,7 +783,7 @@ private def translatePrecond (preconditions : Array Assertion)
   assertEq result.errors.size 0
   match result.program.staticProcedures with
   | proc :: _ =>
-    let precondStr := proc.preconditions.map (fun p => toString (Strata.Laurel.formatStmtExpr p))
+    let precondStr := proc.preconditions.map (fun (p : Strata.Laurel.Condition) => toString (Strata.Laurel.formatStmtExpr p.condition))
       |> String.intercalate ", "
     assert! precondStr.contains "!Any..isfrom_None(key)"
   | [] => assert! false
