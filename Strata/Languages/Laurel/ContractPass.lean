@@ -131,10 +131,10 @@ private structure ContractInfo where
   postName : String
   preSummary : Option String
   postSummary : Option String
-  /-- The original procedure's input parameters (needed for postcondition generation). -/
   inputParams : List Parameter
-  /-- The original procedure's output parameters (needed for postcondition generation). -/
   outputParams : List Parameter
+  /-- Implicit heap parameters that must be prepended to explicit call args. -/
+  implicitArgs : List StmtExprMd
 
 /-- Collect contract info for all procedures with contracts. -/
 private def collectContractInfo (procs : List Procedure) : Std.HashMap String ContractInfo :=
@@ -143,6 +143,8 @@ private def collectContractInfo (procs : List Procedure) : Std.HashMap String Co
     let hasPre := !proc.preconditions.isEmpty
     let hasPost := !postconds.isEmpty
     if hasPre || hasPost then
+      let implicitArgs := proc.inputs.filter (fun p => p.name.text.startsWith "$heap")
+        |>.map (fun _ => mkMd (.Var (.Local (mkId "$heap"))))
       m.insert proc.name.text {
         hasPreCondition := hasPre
         hasPostCondition := hasPost
@@ -152,6 +154,7 @@ private def collectContractInfo (procs : List Procedure) : Std.HashMap String Co
         postSummary := combinedSummary postconds
         inputParams := proc.inputs
         outputParams := proc.outputs
+        implicitArgs := implicitArgs
       }
     else m) {}
 
@@ -217,19 +220,21 @@ private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
   | .Assign targets (.mk (.StaticCall callee args) ..) =>
     match contractInfoMap.get? callee.text with
     | some info =>
+      let fullArgs := info.implicitArgs ++ args
       let preAssert := if info.hasPreCondition
-        then [mkWithMdSummary (.Assert { condition := mkCall info.preName args, summary := info.preSummary }) (info.preSummary.getD "precondition")] else []
+        then [mkWithMdSummary (.Assert { condition := mkCall info.preName fullArgs, summary := info.preSummary }) (info.preSummary.getD "precondition")] else []
       -- Assume $post *after* the assignment, passing both the call arguments
       -- and the assigned target variables so the postcondition can reference outputs.
       let postAssume := if info.hasPostCondition
-        then [mkWithMd (.Assume (mkCall info.postName (args ++ targetsToArgs targets)))] else []
+        then [mkWithMd (.Assume (mkCall info.postName (fullArgs ++ targetsToArgs targets)))] else []
       preAssert ++ [e] ++ postAssume
     | none => [e]
   | .StaticCall callee args =>
     match contractInfoMap.get? callee.text with
     | some info =>
+      let fullArgs := info.implicitArgs ++ args
       let preAssert := if info.hasPreCondition
-        then [mkWithMdSummary (.Assert { condition := mkCall info.preName args, summary := info.preSummary }) (info.preSummary.getD "precondition")] else []
+        then [mkWithMdSummary (.Assert { condition := mkCall info.preName fullArgs, summary := info.preSummary }) (info.preSummary.getD "precondition")] else []
       preAssert ++ [e]
     | none => [e]
   | _ => [e]

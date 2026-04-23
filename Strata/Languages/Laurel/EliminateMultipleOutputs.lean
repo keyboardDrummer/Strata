@@ -33,6 +33,8 @@ private structure MultiOutInfo where
   constructorName : String
   /-- Original output parameters (name, type). -/
   outputs : List Parameter
+  /-- Number of input parameters (used to detect implicit heap args at call sites). -/
+  inputCount : Nat
 
 /-- Identify bodiless functions with multiple outputs and build info records. -/
 private def collectMultiOutFunctions (funcs : List Procedure) : List MultiOutInfo :=
@@ -43,6 +45,7 @@ private def collectMultiOutFunctions (funcs : List Procedure) : List MultiOutInf
         resultTypeName := s!"{f.name.text}$result"
         constructorName := s!"{f.name.text}$result$mk"
         outputs := f.outputs
+        inputCount := f.inputs.length
       }
     else none
 
@@ -83,8 +86,13 @@ private def rewriteAssign (infoMap : Std.HashMap String MultiOutInfo)
   | some info =>
     if targets.length ≤ info.outputs.length then
       let tempName := s!"${callee.text}$temp{counter}"
+      -- If the call has fewer explicit args than the function expects,
+      -- prepend $heap for each missing implicit heap parameter.
+      let implicitCount := info.inputCount - args.length
+      let implicitArgs := List.replicate implicitCount (mkMd (.Var (.Local (mkId "$heap"))))
+      let fullArgs := implicitArgs ++ args
       let tempDecl := mkMd (.Assign [mkVarMd (.Declare ⟨mkId tempName, mkTy (.UserDefined (mkId info.resultTypeName))⟩)]
-          ⟨.StaticCall callee args, callSrc, callMd⟩)
+          ⟨.StaticCall callee fullArgs, callSrc, callMd⟩)
       let assigns := targets.zipIdx.map fun (tgt, i) =>
         mkMd (.Assign [tgt]
           (mkMd (.StaticCall (mkId (destructorName info i))
