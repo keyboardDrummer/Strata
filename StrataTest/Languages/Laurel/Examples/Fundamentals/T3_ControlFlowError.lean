@@ -20,7 +20,7 @@ function assertAndAssumeInFunctions(a: int) returns (r: int)
   a
 };
 
-// Lettish bindings in functions now supported via inlining
+
 function letsInFunction() returns (r: int) {
   var x: int := 0;
   var y: int := x + 1;
