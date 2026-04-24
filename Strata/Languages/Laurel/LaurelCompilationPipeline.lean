@@ -149,7 +149,7 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
     : IO TranslateResultWithLaurel := do
   let (program, model, passDiags) ← runLaurelPasses options program keepAllFilesPrefix
   let unorderedCore := transparencyPass program
-  let unorderedCore := eliminateMultipleOutputs unorderedCore
+  -- let unorderedCore := eliminateMultipleOutputs unorderedCore
   let unorderedCore := inlineLocalVariablesInExpressions unorderedCore
 
   let coreProceduresList := unorderedCore.coreProcedures.map Prod.fst
