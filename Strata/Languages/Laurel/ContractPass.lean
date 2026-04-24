@@ -278,7 +278,7 @@ private def mkInvokeOnAxiom (params : List Parameter) (trigger : StmtExprMd)
   -- The trigger is placed on the innermost quantifier.
   params.foldr (init := (body, true)) (fun p (acc, isInnermost) =>
     let trig := if isInnermost then some trigger else none
-    (mkMd (.Forall p trig acc), false)) |>.1
+    (mkMd (.Quantifier .Forall p trig acc), false)) |>.1
 
 /-- Run the contract pass on a Laurel program.
     All procedures with contracts are transformed. -/
