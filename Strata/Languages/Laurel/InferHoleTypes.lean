@@ -126,13 +126,12 @@ private def inferExpr (expr : StmtExprMd) (expectedType : HighTypeMd) : InferHol
       return ⟨.Block (← inferBlockStmts stmts expectedType) label, source, md⟩
   | .Assign targets value =>
       let targetType := match targets with
-        | target :: _ => computeExprType model target
+        | target :: _ => match target.val with
+          | .Local name => computeExprType model ⟨.Var (.Local name), target.source, target.md⟩
+          | .Field _ fieldName => computeExprType model ⟨.Var (.Field ⟨.Hole, none, .empty⟩ fieldName), target.source, target.md⟩
+          | .Declare param => param.type
         | _ => defaultHoleType
       return ⟨.Assign targets (← inferExpr value targetType), source, md⟩
-  | .LocalVariable name ty init =>
-      match init with
-      | some initExpr => return ⟨.LocalVariable name ty (some (← inferExpr initExpr ty)), source, md⟩
-      | none => return expr
   | .While cond invs dec body =>
       let dec' ← match dec with
         | some d => pure (some (← inferExpr d (bareType .TInt)))
@@ -148,16 +147,11 @@ private def inferExpr (expr : StmtExprMd) (expectedType : HighTypeMd) : InferHol
   | .Assigned n => return ⟨.Assigned (← inferExpr n defaultHoleType), source, md⟩
   | .ProveBy v p => return ⟨.ProveBy (← inferExpr v expectedType) (← inferExpr p defaultHoleType), source, md⟩
   | .ContractOf ty f => return ⟨.ContractOf ty (← inferExpr f defaultHoleType), source, md⟩
-  | .Forall p trigger b =>
+  | .Quantifier mode p trigger b =>
       let trigger' ← match trigger with
         | some t => pure (some (← inferExpr t defaultHoleType))
         | none => pure none
-      return ⟨.Forall p trigger' (← inferExpr b (bareType .TBool)), source, md⟩
-  | .Exists p trigger b =>
-      let trigger' ← match trigger with
-        | some t => pure (some (← inferExpr t defaultHoleType))
-        | none => pure none
-      return ⟨.Exists p trigger' (← inferExpr b (bareType .TBool)), source, md⟩
+      return ⟨.Quantifier mode p trigger' (← inferExpr b (bareType .TBool)), source, md⟩
   | _ => return expr
 end
 
@@ -174,6 +168,7 @@ private def inferProcedure (proc : Procedure) : InferHoleM Procedure := do
 
 /--
 Annotate every `.Hole` in the program with a type inferred from context.
+Returns the updated program and any diagnostics (e.g. holes whose type could not be inferred).
 -/
 def inferHoleTypes (model : SemanticModel) (program : Program) : Program × Statistics :=
   let initState : InferHoleState := { model := model }

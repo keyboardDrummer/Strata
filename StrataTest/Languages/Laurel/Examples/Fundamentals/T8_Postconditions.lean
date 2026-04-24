@@ -14,23 +14,26 @@ namespace Strata.Laurel
 
 def program := r"
 procedure opaqueBody(x: int) returns (r: int)
-// the presence of the ensures make the body opaque. we can consider more explicit syntax.
+  opaque
   ensures r > 0
 {
   if x > 0 then { r := x }
   else { r := 1 }
 };
 
-procedure callerOfOpaqueProcedure() {
+procedure callerOfOpaqueProcedure()
+  opaque
+{
   var x: int := opaqueBody(3);
   assert x > 0;
   assert x == 3
-//^^^^^^^^^^^^^ error: assertion could not be proved
+//^^^^^^^^^^^^^ error: assertion does not hold
 };
 
 procedure invalidPostcondition(x: int)
-    ensures false
-//          ^^^^^ error: assertion does not hold
+  opaque
+  ensures false
+//        ^^^^^ error: postcondition does not hold
 {
 };
 "

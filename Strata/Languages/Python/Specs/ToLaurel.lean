@@ -509,22 +509,21 @@ def SpecAssertMsg.render : SpecAssertMsg → String
   | .userAssertion text  => text
   | .unnamed index       => s!"precondition {index}"
 
-/-- Build a procedure body that asserts preconditions.
-    Outputs are already initialized non-deterministically. -/
-def buildSpecBody (preconditions : Array Assertion)
+/-- Build precondition expressions and an opaque body from spec assertions.
+    Returns `(preconditions, body)` where preconditions are `requires` clauses
+    and the body is opaque with no implementation. -/
+def buildSpecPreconditions (preconditions : Array Assertion)
     (md : Imperative.MetaData Core.Expression)
     (ctx : SpecExprContext)
     (requiredParams : Array String := #[])
-    : ToLaurelM Body := do
-  let fileMd ← mkFileMd
-  let mut stmts : Array StmtExprMd := #[]
+    : ToLaurelM (List Condition × Body) := do
+  let mut preconds : Array Condition := #[]
   let mut idx := 0
-  -- Assert that required parameters are provided (not None)
+  -- Required parameters: not None
   for param in requiredParams do
     let cond : TypedStmtExpr _ := .not (.anyIsfromNone (.identifier param Laurel.tyAny md))
     let msg := SpecAssertMsg.requiredParam param |>.render
-    let assertStmt ← mkStmtWithLoc (.Assert { condition := cond.stmt, summary := some msg }) default
-    stmts := stmts.push assertStmt
+    preconds := preconds.push { condition := cond.stmt, summary := some msg }
     idx := idx + 1
   for assertion in preconditions do
     let formattedMsg := formatAssertionMessage assertion.message
@@ -534,18 +533,13 @@ def buildSpecBody (preconditions : Array Assertion)
     let (⟨condType, condExpr⟩, success) ← runChecked <| specExprToLaurel assertion.formula md ctx
     if success then
       if let .TBool := condType then
-        let assertStmt ← mkStmtWithLoc (.Assert { condition := condExpr.stmt, summary := some msg }) default
-        stmts := stmts.push assertStmt
+        preconds := preconds.push { condition := condExpr.stmt, summary := some msg }
       else
         reportError .typeError default
           s!"Precondition expression is not Bool in '{ctx.procName}' (skipping): {msg}"
     idx := idx + 1
-  let body := {
-      val := .Block stmts.toList none,
-      source := none,
-      md := fileMd
-  }
-  return .Transparent body
+  let body := Body.Opaque [] none [{ val := .All, source := none }]
+  return (preconds.toList, body)
 
 /-! ## Declaration Translation -/
 
@@ -592,7 +586,7 @@ def funcDeclToLaurel (procName : String) (func : FunctionDecl)
     reportError .postconditionUnsupported func.loc "Postconditions not yet supported"
   -- When preconditions exist, use TCore "Any" for all parameters and outputs
   -- to match the Python→Laurel pipeline's Any-wrapping convention.
-  let (inputs, outputs, body) ←
+  let (inputs, outputs, preconds, body) ←
     if func.preconditions.size > 0 then do
       let anyTy : HighTypeMd := tyAny
       let anyInputs := inputs.map fun p => { p with type := anyTy }
@@ -600,18 +594,18 @@ def funcDeclToLaurel (procName : String) (func : FunctionDecl)
       let argTypes := allArgs.foldl (init := {}) fun m a =>
         m.insert a.name Laurel.tyAny
       let specCtx : SpecExprContext := { procName, argTypes }
-      let body ← buildSpecBody func.preconditions .empty specCtx
+      let (preconds, body) ← buildSpecPreconditions func.preconditions .empty specCtx
         (requiredParams := allArgs.filterMap fun a =>
           if a.default.isNone then some a.name else none)
-      pure (anyInputs, anyOutputs, body)
+      pure (anyInputs, anyOutputs, preconds, body)
     else
-      pure (inputs, outputs, Body.Opaque [] none [])
+      pure (inputs, outputs, [], Body.Opaque [] none [{ val := .All, source := none }])
   let md ← mkMdWithFileRange func.loc
   return {
     name := { text := procName, md := md }
     inputs := inputs.toList
     outputs := outputs
-    preconditions := []
+    preconditions := preconds
     decreases := none
     isFunctional := false
     body := body

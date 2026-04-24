@@ -37,8 +37,8 @@ private def processResolution (input : Lean.Parser.InputContext) : IO (Array Dia
 /-! ## Duplicate static procedure names -/
 
 def dupProcedures := r"
-procedure foo() { };
-procedure foo() { };
+procedure foo() opaque { };
+procedure foo() opaque { };
 //        ^^^ error: Duplicate definition 'foo' is already defined in this scope
 "
 
@@ -72,30 +72,38 @@ composite Foo {
 /-! ## Duplicate parameter names in a procedure -/
 
 def dupParams := r"
-procedure foo(x: int, x: bool) { };
+procedure foo(x: int, x: bool)
 //                    ^ error: Duplicate definition 'x' is already defined in this scope
+  opaque
+{ };
 "
 
 #guard_msgs (error, drop all) in
-#eval testInputWithOffset "DupParams" dupParams 61 processResolution
+#eval testInputWithOffset "DupParams" dupParams 77 processResolution
 
 /-! ## Duplicate instance procedure names in a composite type -/
 
 def dupInstanceProcs := r"
 composite Foo {
-  procedure bar() { };
-  procedure bar() { };
+  procedure bar()
+//          ^^^ error: Instance procedure 'bar' on composite type 'Foo' is not yet supported
+    opaque
+  { };
+  procedure bar()
+//          ^^^ error: Instance procedure 'bar' on composite type 'Foo' is not yet supported
 //          ^^^ error: Duplicate definition 'bar' is already defined in this scope
+    opaque
+  { };
 }
 "
 
 #guard_msgs (error, drop all) in
-#eval testInputWithOffset "DupInstanceProcs" dupInstanceProcs 71 processResolution
+#eval testInputWithOffset "DupInstanceProcs" dupInstanceProcs 89 processResolution
 
 /-! ## Duplicate local variable names in the same block -/
 
 def dupLocals := r"
-procedure foo() {
+procedure foo() opaque {
   var x: int := 1;
   var x: int := 2
 //    ^ error: Duplicate definition 'x' is already defined in this scope
@@ -109,7 +117,7 @@ procedure foo() {
 
 def dupProcType := r"
 composite Foo { }
-procedure Foo() { };
+procedure Foo() opaque { };
 //        ^^^ error: Duplicate definition 'Foo' is already defined in this scope
 "
 
@@ -119,7 +127,7 @@ procedure Foo() { };
 /-! ## Shadowing quantifier variables in nested scopes is OK (no error expected) -/
 
 def shadowQuantifierVars := r"
-procedure test() {
+procedure test() opaque {
   assert forall(x: int) => forall(x: int) => x > 0
 };
 "
@@ -130,7 +138,7 @@ procedure test() {
 /-! ## Shadowing in nested blocks is OK (no error expected) -/
 
 def shadowingOk := r"
-procedure foo() {
+procedure foo() opaque {
   var x: int := 1;
   {
     var x: int := 2

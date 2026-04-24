@@ -8,8 +8,12 @@ module
 public import Strata.Languages.Laurel.LaurelToCoreTranslator
 import Strata.Languages.Laurel.DesugarShortCircuit
 import Strata.Languages.Laurel.EliminateReturnsInExpression
+import Strata.Languages.Laurel.EliminateReturnStatements
 import Strata.Languages.Laurel.EliminateValueReturns
+import Strata.Languages.Laurel.InlineLocalVariablesInExpressions
 import Strata.Languages.Laurel.ConstrainedTypeElim
+import Strata.Languages.Laurel.ContractPass
+import Strata.Languages.Laurel.EliminateMultipleOutputs
 import Strata.Languages.Laurel.TypeAliasElim
 import Strata.Languages.Core.Verifier
 import Strata.Util.Profile
@@ -24,9 +28,10 @@ to Strata Core. The pipeline is:
 1. Prepend core definitions for Laurel.
 2. Run a sequence of Laurel-to-Laurel lowering passes (resolution, heap
    parameterization, type hierarchy, modifies clauses, hole inference,
-   desugaring, lifting, constrained type elimination).
-3. Group and order declarations into an `OrderedLaurel`.
-4. Translate the `OrderedLaurel` to a `Core.Program`.
+   desugaring, lifting, constrained type elimination, contract pass).
+3. Run the transparency pass to produce an `UnorderedCoreWithLaurelTypes`.
+4. Group and order declarations into a `CoreWithLaurelTypes`.
+5. Translate the `CoreWithLaurelTypes` to a `Core.Program`.
 -/
 
 open Core (VCResult VCResults VerifyOptions)
@@ -183,6 +188,28 @@ private def runLaurelPasses (options : LaurelTranslateOptions) (program : Progra
       model := result.model
     emit pass.name "laurel.st" program
 
+  program := eliminateReturnStatements program
+  emit "EliminateReturnStatements" "laurel.st" program
+
+  -- Capture resolution error count before contractPass so we only detect
+  -- errors introduced by contractPass itself, not by earlier passes.
+  let preContractResolutionErrorCount := (resolve program (some model)).errors.size
+
+  program := contractPass program
+
+  -- Check if contractPass introduced new resolution errors.
+  let finalResolutionErrors := (resolve program (some model)).errors
+  let newResolutionErrors : List DiagnosticModel :=
+    if finalResolutionErrors.size > preContractResolutionErrorCount then
+      let newCount := finalResolutionErrors.size - preContractResolutionErrorCount
+      let firstNew := finalResolutionErrors.toList.drop preContractResolutionErrorCount
+        |>.head?.map (·.message) |>.getD "unknown"
+      [DiagnosticModel.fromMessage
+        s!"Strata bug: {newCount} new resolution error(s) introduced by pipeline passes. First new error: {firstNew}"
+        DiagnosticType.StrataBug]
+    else []
+
+  allDiags := allDiags ++ newResolutionErrors
   return (program, model, allDiags, allStats)
 
 /--
@@ -192,16 +219,61 @@ When `keepAllFilesPrefix` is provided, the program state after each named
 Laurel-to-Laurel pass is written to `{prefix}.{n}.{passName}.laurel.st`.
 -/
 def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
+    (keepAllFilesPrefix : Option String := none)
     : IO TranslateResultWithLaurel :=
-  runPipelineM options.keepAllFilesPrefix do
-    let (program, model, passDiags, stats) ← runLaurelPasses options program
-    let ordered := orderProgram program
-    let initState : TranslateState := { model := model, overflowChecks := options.overflowChecks }
+  runPipelineM keepAllFilesPrefix do
+  let (program, model, passDiags, stats) ← runLaurelPasses options program
+  let unorderedCore := transparencyPass program
+  -- let unorderedCore := eliminateMultipleOutputs unorderedCore
+  let unorderedCore := inlineLocalVariablesInExpressions unorderedCore
+
+  let coreProceduresList := unorderedCore.coreProcedures.map Prod.fst
+  let fnProgram : Program := {
+    staticProcedures := unorderedCore.functions ++ coreProceduresList,
+    staticFields := [],
+    types := unorderedCore.datatypes.map TypeDefinition.Datatype ++
+    -- Hack to compensate for references to composite types not having been updated yet.
+      program.types.filter (fun t => match t with | .Composite _ => true | _ => false),
+    constants := program.constants
+  }
+  let fnResolveResult := resolve fnProgram (some model)
+  let fnModel := fnResolveResult.model
+
+  -- Reconstruct UnorderedCoreWithLaurelTypes from the resolved fnProgram so that
+  -- identifiers introduced by eliminateMultipleOutputs have their uniqueId set.
+  let resolvedProcs := fnResolveResult.program.staticProcedures
+  let resolvedDatatypes := fnResolveResult.program.types.filterMap fun td =>
+    match td with | .Datatype dt => some dt | _ => none
+  -- Build a map from procedure name to its free postcondition
+  let postMap : Std.HashMap String StmtExprMd :=
+    unorderedCore.coreProcedures.foldl (fun m (p, post) => m.insert p.name.text post) {}
+  let defaultPost : StmtExprMd := { val := .LiteralBool true, source := none }
+  let unorderedCore : UnorderedCoreWithLaurelTypes := {
+    functions := resolvedProcs.filter (·.isFunctional)
+    coreProcedures := (resolvedProcs.filter (!·.isFunctional)).map fun p =>
+      (p, postMap.getD p.name.text defaultPost)
+    datatypes := resolvedDatatypes
+    constants := fnResolveResult.program.constants
+  }
+
+  let coreWithLaurelTypes := orderFunctionsAndProofs unorderedCore
+  if ! passDiags.isEmpty then
+    return (none, passDiags, program, stats)
+  else
+    let initState : TranslateState := { model := fnModel, overflowChecks := options.overflowChecks }
     let (coreProgramOption, translateState) :=
-      runTranslateM initState (translateLaurelToCore options program ordered)
-    if let some coreProgram := coreProgramOption then
-      emit "CoreProgram" "core.st" coreProgram
-    let allDiagnostics := passDiags ++ translateState.diagnostics
+      runTranslateM initState (translateLaurelToCore options program coreWithLaurelTypes)
+    -- Because of the duplication between functions and proofs, this translation is liable to create duplicate diagnostics
+    -- User errors should be checked in an earlier phase, and all dumb translation errors are Strata bugs
+    let allDiagnostics := translateState.diagnostics.eraseDups
+    let allDiagnostics :=
+      if translateState.coreProgramHasSuperfluousErrors && allDiagnostics.isEmpty then
+        -- The program was suppressed but no diagnostics explain why — that's a bug.
+        allDiagnostics ++ [DiagnosticModel.fromMessage
+          "Core program was suppressed due to superfluous errors, but no diagnostics were emitted. This is a bug."
+          DiagnosticType.StrataBug]
+      else allDiagnostics
+
     let coreProgramOption :=
       if translateState.coreProgramHasSuperfluousErrors then none else coreProgramOption
     return (coreProgramOption, allDiagnostics, program, stats)
@@ -217,13 +289,14 @@ def translate (options : LaurelTranslateOptions) (program : Program) : IO Transl
 Verify a Laurel program using an SMT solver.
 -/
 def verifyToVcResults (program : Program)
-    (options : LaurelVerifyOptions := default)
+    (options : VerifyOptions := .default)
+    (laurelOptions : LaurelTranslateOptions)
     : IO (Option VCResults × List DiagnosticModel) := do
-  let (coreProgramOption, translateDiags) ← translate options.translateOptions program
+  let (coreProgramOption, translateDiags) ← translate laurelOptions program
 
   match coreProgramOption with
   | some coreProgram =>
-    let options := { options.verifyOptions with removeIrrelevantAxioms := .Precise }
+    let options := { options with removeIrrelevantAxioms := .Precise }
     let runner tempDir :=
       EIO.toIO (fun f => IO.Error.userError (toString f))
           (Core.verify coreProgram tempDir .none options)
@@ -238,14 +311,16 @@ Verify a Laurel program using an SMT solver, returning results with
 duplicated assertions merged at the VCOutcome level.
 -/
 def verifyToMergedResults (program : Program)
-    (options : LaurelVerifyOptions := default)
+    (options : VerifyOptions := .default)
+    (laurelOptions : LaurelTranslateOptions)
     : IO (Option VCResults × List DiagnosticModel) := do
-  let (vcOpt, diags) ← verifyToVcResults program options
+  let (vcOpt, diags) ← verifyToVcResults program options laurelOptions
   return (vcOpt.map (·.mergeByAssertion), diags)
 
 def verifyToDiagnostics (files : Map Strata.Uri Lean.FileMap) (program : Program)
-    (options : LaurelVerifyOptions := default) : IO (Array Diagnostic) := do
-  let results ← verifyToMergedResults program options
+    (options : VerifyOptions := .default)
+    (laurelOptions : LaurelTranslateOptions := {}) : IO (Array Diagnostic) := do
+  let results ← verifyToMergedResults program options laurelOptions
   let phases := Core.coreAbstractedPhases
   let translationDiags := results.snd.map (fun dm => dm.toDiagnostic files)
   let vcDiags := match results.fst with
@@ -255,7 +330,7 @@ def verifyToDiagnostics (files : Map Strata.Uri Lean.FileMap) (program : Program
 
 def verifyToDiagnosticModels (program : Program) (options : LaurelVerifyOptions := default)
     : IO (Array DiagnosticModel) := do
-  let results ← verifyToMergedResults program options
+  let results ← verifyToMergedResults program options.verifyOptions options.translateOptions
   let phases := Core.coreAbstractedPhases
   let vcDiags := match results.fst with
   | none => []

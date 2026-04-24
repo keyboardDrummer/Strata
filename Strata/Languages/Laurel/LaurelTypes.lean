@@ -36,9 +36,10 @@ def computeExprType (model : SemanticModel) (expr : StmtExprMd) : HighTypeMd :=
   | .LiteralString _ => ⟨ .TString, source, md ⟩
   | .LiteralDecimal _ => ⟨ .TReal, source, md ⟩
   -- Variables
-  | .Identifier id => (model.get id).getType
+  | .Var (.Local id) => (model.get id).getType
+  | .Var (.Declare _) => ⟨ .TVoid, source, md ⟩
   -- Field access
-  | .FieldSelect _ fieldName => (model.get fieldName).getType
+  | .Var (.Field _ fieldName) => (model.get fieldName).getType
   -- Pure field update returns the same type as the target
   | .PureFieldUpdate target _ _ => computeExprType model target
   -- Calls — return the declared output type when available, fall back to Unknown otherwise
@@ -47,7 +48,7 @@ def computeExprType (model : SemanticModel) (expr : StmtExprMd) : HighTypeMd :=
     | .parameter p => p.type
     | .staticProcedure proc => match proc.outputs with
       | [singleOutput] => singleOutput.type
-      | _ => { val := HighType.Unknown, source := none, md := default }
+      | outputs => { val := .MultiValuedExpr (outputs.map (·.type)), source := none, md := default }
     | .unresolved => { val := HighType.Unknown, source := none, md := default }
     | astNode =>
       dbg_trace s!"BUG: static call to {callee} not to a procedure but to a {repr astNode}"
@@ -75,7 +76,6 @@ def computeExprType (model : SemanticModel) (expr : StmtExprMd) : HighTypeMd :=
         computeExprType model last
     | none => ⟨ .TVoid, source, md ⟩
   -- Statements
-  | .LocalVariable _ _ _ => ⟨ .TVoid, source, md ⟩
   | .While _ _ _ _ => ⟨ .TVoid, source, md ⟩
   | .Exit _ => ⟨ .TVoid, source, md ⟩
   | .Return _ => ⟨ .TVoid, source, md ⟩
@@ -89,8 +89,7 @@ def computeExprType (model : SemanticModel) (expr : StmtExprMd) : HighTypeMd :=
   | .AsType _ ty => ty
   | .IsType _ _ => ⟨ .TBool, source, md ⟩
   -- Verification specific
-  | .Forall _ _ _ => ⟨ .TBool, source, md ⟩
-  | .Exists _ _ _ => ⟨ .TBool, source, md ⟩
+  | .Quantifier _ _ _ _ => ⟨ .TBool, source, md ⟩
   | .Assigned _ => ⟨ .TBool, source, md ⟩
   | .Old v => computeExprType model v
   | .Fresh _ => ⟨ .TBool, source, md ⟩
