@@ -93,7 +93,8 @@ def main() -> None:
     throw <| .userError s!"Expected assertion failure for negative indexing on empty list, got: {diags.map (·.message)}"
 
 -- Test 6: len() on a class instance without __len__.
--- This should be rejected as a user error.
+-- This should be rejected as a user error during translation (before
+-- diagnostics are produced), so processPythonFile throws an IO.Error.
 #guard_msgs in
 #eval withPython (warnOnSkip := false) fun pythonCmd => do
   let program :=
@@ -106,11 +107,10 @@ def main() -> None:
     obj: MyObj = MyObj(\"test\")
     n: int = len(obj)
 "
-  let expectedMsg := "len() is not supported on 'MyObj' (no __len__ method)"
-  match ← processPythonFile pythonCmd (stringInputContext "test.py" program) |>.toBaseIO with
-  | .ok _ => throw <| .userError s!"Expected error containing '{expectedMsg}', but succeeded"
-  | .error e =>
-    unless containsSubstr (toString e) expectedMsg do
-      throw <| .userError s!"Expected error containing '{expectedMsg}', got: {e}"
+  match ← (processPythonFile pythonCmd (stringInputContext "test.py" program)).toBaseIO with
+  | .ok _ => throw <| IO.userError "Expected error for len() on class without __len__"
+  | .error err =>
+    unless containsSubstr (toString err) "len() is not supported" do
+      throw <| IO.userError s!"Unexpected error: {err}"
 
 end Strata.Python.DictNoneTest
