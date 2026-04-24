@@ -190,6 +190,10 @@ private meta def testCases : List (String × Expected) := [
     .fail "User code error: 'delete_item' called with missing required arguments: [Key]",
   -- Type alias resolution tests (TDD for resolveTypeName refactoring)
   .mk "test_method_dispatch.py" .success,
+  .mk "test_keyword_dispatch.py" .success,
+  .mk "test_keyword_dispatch_variable.py" .success,
+  .mk "test_wrong_keyword_dispatch.py" $
+    .failPrefix "Python to Laurel translation failed: Type error: Dispatched function 'connect' called with wrong keyword argument, expected 'service_name' but got 'wrong_param'",
   .mk "test_annotation_dispatch.py" .success,
   .mk "test_constructor_dispatch.py" .success,
   .mk "test_reassign_dispatch.py" .success,
@@ -343,10 +347,9 @@ Without the attribute, the regex VC would be ❓ unknown. -/
     | .error msg => throw <| IO.userError s!"Pipeline failed: {msg}"
     | .ok vcResults =>
       for r in vcResults do
-        if r.obligation.label.startsWith "servicelib_Storage_" then
-          if !r.isSuccess then
-            throw <| IO.userError
-              s!"Expected all Storage preconditions to pass but got: {r.formatOutcome}"
+        if !r.isSuccess then
+          throw <| IO.userError
+            s!"Expected all Storage preconditions to pass but got: {r.formatOutcome}"
 
 /-! ## Resolution error test after FilterPrelude
 

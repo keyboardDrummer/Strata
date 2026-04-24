@@ -359,7 +359,7 @@ def Laurel.analyzeToDiagnosticModels
     (program : Laurel.Program)
     (options : Core.VerifyOptions := .default)
     : IO (Array DiagnosticModel) :=
-  Strata.Laurel.verifyToDiagnosticModels program options
+  Strata.Laurel.verifyToDiagnosticModels program { verifyOptions := options }
 
 /-! ### Python direct-to-Core pipeline -/
 

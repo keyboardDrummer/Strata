@@ -37,21 +37,21 @@ namespace Strata.Laurel
 
 public section
 
-/-- Substitute all occurrences of identifier `name` with `replacement` in `expr`. -/
+/-- Substitute all occurrences of local variable `name` with `replacement` in `expr`. -/
 private def substIdentifier (name : Identifier) (replacement : StmtExprMd) (expr : StmtExprMd)
     : StmtExprMd :=
   mapStmtExpr (fun e =>
     match e.val with
-    | .Identifier n => if n == name then replacement else e
+    | .Var (.Local n) => if n == name then replacement else e
     | _ => e) expr
 
 /-- Inline initialized local variables in a block, substituting their
-    initializers into the remaining statements. Non-LocalVariable
+    initializers into the remaining statements. Non-Assign/Declare
     statements are kept as-is. -/
 private def inlineLocalsInStmts (stmts : List StmtExprMd) : List StmtExprMd :=
   match stmts with
   | [] => []
-  | ⟨.LocalVariable [parameter] (some initializer), _, _⟩ :: rest =>
+  | ⟨.Assign [⟨.Declare parameter, _, _⟩] initializer, _, _⟩ :: rest =>
     let rest' := rest.map (substIdentifier parameter.name initializer)
     inlineLocalsInStmts rest'
   | s :: rest => s :: inlineLocalsInStmts rest

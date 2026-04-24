@@ -9,7 +9,6 @@ public import Strata.DDM.AST
 public import Strata.DDM.Format
 public import Strata.Languages.Laurel.Grammar.LaurelGrammar
 public import Strata.Languages.Laurel.Laurel
-public import Strata.Languages.Laurel.TransparencyPass
 
 namespace Strata
 namespace Laurel
@@ -63,6 +62,7 @@ partial def highTypeValToArg : HighType → Arg
     | [] => laurelOp "compositeType" #[ident "Unknown"]
     | t :: _ => highTypeToArg t
   | .Unknown => laurelOp "compositeType" #[ident "Unknown"]
+  | .MultiValuedExpr _ => laurelOp "compositeType" #[ident "Unknown"]
 
 end
 
@@ -80,6 +80,10 @@ private def operationName : Operation → String
 -- Internal-only: public because `partial` prevents `private` in this section
 partial def stmtExprToArg (s : StmtExprMd) : Arg := stmtExprValToArg s.val
 where
+  variableToArg : Variable → Arg
+    | .Local name => laurelOp "identifier" #[ident name.text]
+    | .Field target field => laurelOp "fieldAccess" #[stmtExprToArg target, ident field.text]
+    | .Declare param => laurelOp "identifier" #[ident param.name.text]
   stmtExprValToArg : StmtExpr → Arg
     | .LiteralBool b => laurelOp "literalBool" #[boolToArg b]
     | .LiteralInt n =>
@@ -90,27 +94,37 @@ where
     | .LiteralString s => laurelOp "string" #[.strlit sr s]
     | .Hole true _ => laurelOp "hole"
     | .Hole false _ => laurelOp "nondetHole"
-    | .Identifier name => laurelOp "identifier" #[ident name.text]
+    | .Var (.Local name) => laurelOp "identifier" #[ident name.text]
     | .Block stmts label =>
       let stmtArgs := stmts.map stmtExprToArg |>.toArray
       match label with
       | none => laurelOp "block" #[semicolonSep stmtArgs]
       | some l => laurelOp "labelledBlock" #[semicolonSep stmtArgs, ident l]
-    | .LocalVariable params init =>
-      -- Grammar only supports single-target varDecl; use first parameter or placeholder
-      let (nameText, ty) := match params with
-        | p :: _ => (p.name.text, p.type)
-        | [] => ("_", ⟨.TVoid, none, #[]⟩)
-      let typeOpt := optionArg (some (laurelOp "typeAnnotation" #[highTypeToArg ty]))
-      let initOpt := optionArg (init.map fun e => laurelOp "initializer" #[stmtExprToArg e])
-      laurelOp "varDecl" #[ident nameText, typeOpt, initOpt]
+    | .Var (.Declare param) =>
+      let typeOpt := optionArg (some (laurelOp "typeAnnotation" #[highTypeToArg param.type]))
+      let initOpt := optionArg none
+      laurelOp "varDecl" #[ident param.name.text, typeOpt, initOpt]
+    | .Assign [⟨.Declare param, _, _⟩] value =>
+      let typeOpt := optionArg (some (laurelOp "typeAnnotation" #[highTypeToArg param.type]))
+      let initOpt := optionArg (some (laurelOp "initializer" #[stmtExprToArg value]))
+      laurelOp "varDecl" #[ident param.name.text, typeOpt, initOpt]
     | .Assign targets value =>
-      -- Grammar only supports single-target assign; use first target or placeholder
-      let targetArg := match targets with
-        | t :: _ => stmtExprToArg t
-        | [] => laurelOp "identifier" #[ident "_"]
-      laurelOp "assign" #[targetArg, stmtExprToArg value]
-    | .FieldSelect target field =>
+      if targets.length > 1 then
+        let targetArgs := targets.map fun t =>
+          match t.val with
+          | .Declare param => laurelOp "assignTargetDecl" #[ident param.name.text, highTypeToArg param.type]
+          | .Local name => laurelOp "assignTargetVar" #[ident name.text]
+          | .Field target _ =>
+            match target.val with
+            | .Var (.Local name) => laurelOp "assignTargetField" #[ident name.text, ident (match t.val with | .Field _ f => f.text | _ => "_")]
+            | _ => laurelOp "assignTargetVar" #[ident "_"]
+        laurelOp "multiAssign" #[commaSep targetArgs.toArray, stmtExprToArg value]
+      else
+        let targetArg := match targets with
+          | t :: _ => variableToArg t.val
+          | [] => laurelOp "identifier" #[ident "_"]
+        laurelOp "assign" #[targetArg, stmtExprToArg value]
+    | .Var (.Field target field) =>
       laurelOp "fieldAccess" #[stmtExprToArg target, ident field.text]
     | .StaticCall callee args =>
       let calleeArg := laurelOp "identifier" #[ident callee.text]
@@ -133,7 +147,10 @@ where
     | .Return (some value) => laurelOp "return" #[stmtExprToArg value]
     | .Return none => laurelOp "return" #[laurelOp "block" #[semicolonSep #[]]]
     | .Exit label => laurelOp "exit" #[ident label]
-    | .Assert cond => laurelOp "assert" #[stmtExprToArg cond, optionArg none]
+    | .Assert cond =>
+      let errOpt := optionArg (cond.summary.map fun msg =>
+        laurelOp "errorSummary" #[.strlit sr msg])
+      laurelOp "assert" #[stmtExprToArg cond.condition, errOpt]
     | .Assume cond => laurelOp "assume" #[stmtExprToArg cond]
     | .New name => laurelOp "new" #[ident name.text]
     | .This => laurelOp "identifier" #[ident "this"]
@@ -150,12 +167,10 @@ where
       let calleeExpr := laurelOp "fieldAccess" #[stmtExprToArg target, ident callee.text]
       let argsArr := args.map stmtExprToArg |>.toArray
       laurelOp "call" #[calleeExpr, commaSep argsArr]
-    | .Forall param trigger body =>
+    | .Quantifier mode param trigger body =>
       let trigOpt := optionArg (trigger.map fun t => laurelOp "trigger" #[stmtExprToArg t])
-      laurelOp "forallExpr" #[ident param.name.text, highTypeToArg param.type, trigOpt, stmtExprToArg body]
-    | .Exists param trigger body =>
-      let trigOpt := optionArg (trigger.map fun t => laurelOp "trigger" #[stmtExprToArg t])
-      laurelOp "existsExpr" #[ident param.name.text, highTypeToArg param.type, trigOpt, stmtExprToArg body]
+      let opName := match mode with | .Forall => "forallExpr" | .Exists => "existsExpr"
+      laurelOp opName #[ident param.name.text, highTypeToArg param.type, trigOpt, stmtExprToArg body]
     | .ReferenceEquals lhs rhs =>
       laurelOp "eq" #[stmtExprToArg lhs, stmtExprToArg rhs]
     | .Assigned name => laurelOp "call" #[laurelOp "identifier" #[ident "assigned"], commaSep #[stmtExprToArg name]]
@@ -181,18 +196,20 @@ private def fieldToArg (f : Field) : Arg :=
   else
     laurelOp "immutableField" #[ident f.name.text, highTypeToArg f.type]
 
-private def requiresClauseToArg (e : StmtExprMd) : Arg :=
-  let errOpt := optionArg (e.md.getPropertySummary.map fun msg =>
+private def requiresClauseToArg (c : Condition) : Arg :=
+  let errOpt := optionArg (c.summary.map fun msg =>
     laurelOp "errorSummary" #[.strlit sr msg])
-  laurelOp "requiresClause" #[stmtExprToArg e, errOpt]
+  laurelOp "requiresClause" #[stmtExprToArg c.condition, errOpt]
 
-private def ensuresClauseToArg (e : StmtExprMd) : Arg :=
-  let errOpt := optionArg (e.md.getPropertySummary.map fun msg =>
+private def ensuresClauseToArg (c : Condition) : Arg :=
+  let errOpt := optionArg (c.summary.map fun msg =>
     laurelOp "errorSummary" #[.strlit sr msg])
-  laurelOp "ensuresClause" #[stmtExprToArg e, errOpt]
+  laurelOp "ensuresClause" #[stmtExprToArg c.condition, errOpt]
 
 private def modifiesClauseToArg (modifies : List StmtExprMd) : Arg :=
-  if modifies.any (fun e => match e.val with | .All => true | _ => false) then
+  -- Check if any modifier is a wildcard (.All)
+  let isWildcard (e : StmtExprMd) : Bool := match e.val with | .All => true | _ => false
+  if modifies.any isWildcard then
     laurelOp "modifiesWildcard" #[]
   else
     let refs := modifies.map stmtExprToArg |>.toArray
@@ -226,13 +243,13 @@ private def procedureToOp (proc : Procedure) : Strata.Operation :=
     | .Opaque postconds impl modifies =>
       let ens := postconds.map ensuresClauseToArg |>.toArray
       let mods := if modifies.isEmpty then #[] else #[modifiesClauseToArg modifies]
-      let opaqueOp := laurelOp "opaqueSpec" #[seqArg ens, seqArg mods]
+      let opaqueSpec := laurelOp "opaqueSpec" #[seqArg ens, seqArg mods]
       let body := optionArg (impl.map fun e => laurelOp "body" #[stmtExprToArg e])
-      (optionArg (some opaqueOp), body)
+      (optionArg (some opaqueSpec), body)
     | .Abstract postconds =>
       let ens := postconds.map ensuresClauseToArg |>.toArray
-      let opaqueOp := laurelOp "opaqueSpec" #[seqArg ens, seqArg #[]]
-      (optionArg (some opaqueOp), optionArg none)
+      let opaqueSpec := laurelOp "opaqueSpec" #[seqArg ens, seqArg #[]]
+      (optionArg (some opaqueSpec), optionArg none)
     | .External =>
       (optionArg none, optionArg (some (laurelOp "externalBody")))
   { ann := sr
@@ -303,6 +320,8 @@ private def typeDefinitionToOp : TypeDefinition → Strata.Operation
   | .Composite ct => compositeToOp ct
   | .Constrained ct => constrainedTypeToOp ct
   | .Datatype dt => datatypeToOp dt
+  -- Placeholder: aliases are eliminated before CST serialization
+  | .Alias _ => { ann := sr, name := { dialect := "Laurel", name := "typeAlias" }, args := #[] }
 
 private def procedureCommandOp (proc : Procedure) : Strata.Operation :=
   { ann := sr
@@ -359,6 +378,13 @@ def formatTypeDefinition : TypeDefinition → Format
   | .Composite ty => formatCompositeType ty
   | .Constrained ty => formatConstrainedType ty
   | .Datatype ty => formatDatatypeDefinition ty
+  | .Alias ta => "type " ++ format ta.name ++ " = " ++ formatHighType ta.target
+
+def formatVariable (v : Variable) : Format :=
+  formatArg (stmtExprToArg ⟨.Var v, none, {}⟩)
+
+def formatVariableMd (v : VariableMd) : Format :=
+  formatArg (stmtExprToArg ⟨.Var v.val, v.source, v.md⟩)
 
 def formatConstant (c : Constant) : Format :=
   "const " ++ format c.name ++ ": " ++ formatHighType c.type ++
@@ -377,20 +403,11 @@ instance : Std.ToFormat CompositeType where format := formatCompositeType
 instance : Std.ToFormat ConstrainedType where format := formatConstrainedType
 instance : Std.ToFormat DatatypeConstructor where format := formatDatatypeConstructor
 instance : Std.ToFormat DatatypeDefinition where format := formatDatatypeDefinition
+instance : Std.ToFormat Variable where format := formatVariable
+instance : Std.ToFormat VariableMd where format := formatVariableMd
 instance : Std.ToFormat Constant where format := formatConstant
 instance : Std.ToFormat TypeDefinition where format := formatTypeDefinition
 instance : Std.ToFormat Program where format := formatProgram
-
-def formatUnorderedCoreWithLaurelTypes (p : UnorderedCoreWithLaurelTypes) : Format :=
-  let sections : List Format :=
-    (p.datatypes.map formatDatatypeDefinition) ++
-    (p.constants.map formatConstant) ++
-    (p.functions.map formatProcedure) ++
-    (p.coreProcedures.map fun (proc, _) => formatProcedure proc)
-  Std.Format.joinSep sections "\n\n"
-
-instance : Std.ToFormat UnorderedCoreWithLaurelTypes where
-  format := formatUnorderedCoreWithLaurelTypes
 
 instance : Repr StmtExpr where
   reprPrec r _ := s!"{Std.format r}"

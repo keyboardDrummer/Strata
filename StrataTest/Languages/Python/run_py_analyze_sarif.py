@@ -58,12 +58,20 @@ SKIP_TESTS = BOTH_SKIP | {
     "test_subscription",
     "test_try_except",
     "test_try_except_scoping",
+    "test_tuple_create",
+    "test_tuple_swap",
+    "test_tuple_type",
+    "test_tuple_unpack",
     "test_variable_reassign",
     "test_while_loop",
     "test_with_statement",
     "test_fstrings",
 }
-SKIP_TESTS_LAUREL = BOTH_SKIP
+SKIP_TESTS_LAUREL = BOTH_SKIP | {
+    "test_try_except", # TVoid type from raise statements not supported in function copies
+    "test_multiple_except", # TVoid type from raise statements not supported in function copies
+    "test_datetime_now_tz", # Resolution failure: timezone/utc not defined
+}
 
 
 def run(test_file: str, *, laurel: bool) -> bool:

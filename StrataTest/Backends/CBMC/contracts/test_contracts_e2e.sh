@@ -64,14 +64,17 @@ echo ""
 # ---- Test 1: Full DFCC pipeline with requires/ensures ----
 echo "--- Test 1: Procedure with requires/ensures (full DFCC + CBMC) ---"
 
-build_goto "contract" 'procedure add(x: int, y: int) returns (r: int)
+build_goto "contract" 'procedure add(x: int, y: int, out r: int)
   requires x >= 0
+  opaque
   ensures r >= x
 {
   r := x + y;
 }
 
-procedure main() {
+procedure main()
+  opaque
+{
   var a: int := 42;
   assert a > 0;
 }'
@@ -102,7 +105,9 @@ echo ""
 # ---- Test 2: Simple assert (full CBMC verification) ----
 echo "--- Test 2: Simple assert (full DFCC + CBMC) ---"
 
-build_goto "assert" 'procedure main() {
+build_goto "assert" 'procedure main()
+  opaque
+{
   var x: int := 10;
   var y: int := x + 5;
   assert y > x;
@@ -120,14 +125,17 @@ echo ""
 # ---- Test 3: Procedure with ensures (contract in symbol table) ----
 echo "--- Test 3: Procedure with ensures (full DFCC + CBMC) ---"
 
-build_goto "ensures" 'procedure inc(x: int) returns (r: int)
+build_goto "ensures" 'procedure inc(x: int, out r: int)
   requires x >= 0
+  opaque
   ensures r > x
 {
   r := x + 1;
 }
 
-procedure main() {
+procedure main()
+  opaque
+{
   var v: int := 10;
   assert v > 0;
 }'
@@ -144,8 +152,9 @@ echo ""
 # ---- Test 4: Loop with invariant (full DFCC + CBMC) ----
 echo "--- Test 4: Loop with invariant (full DFCC + CBMC) ---"
 
-build_goto "loop" 'procedure sum_to_n(n: int) returns (s: int)
+build_goto "loop" 'procedure sum_to_n(n: int, out s: int)
   requires n >= 0
+  opaque
   ensures s >= 0
 {
   var i: int := 0;
@@ -159,7 +168,9 @@ build_goto "loop" 'procedure sum_to_n(n: int) returns (s: int)
   }
 }
 
-procedure main() {
+procedure main()
+  opaque
+{
   var x: int := 5;
   assert x > 0;
 }'
@@ -177,14 +188,17 @@ echo ""
 # ---- Test 5: Procedure call through DFCC + CBMC ----
 echo "--- Test 5: Procedure call (full DFCC + CBMC) ---"
 
-build_goto "call" 'procedure double(x: int) returns (r: int)
+build_goto "call" 'procedure double(x: int, out r: int)
   requires x >= 0
+  opaque
   ensures r == x + x
 {
   r := x + x;
 }
 
-procedure main() {
+procedure main()
+  opaque
+{
   var a: int := 3;
   assert a > 0;
 }'
@@ -215,21 +229,25 @@ echo ""
 # ---- Test 6: Multiple procedures with contracts ----
 echo "--- Test 6: Multiple procedures with contracts ---"
 
-build_goto "multi" 'procedure inc(x: int) returns (r: int)
+build_goto "multi" 'procedure inc(x: int, out r: int)
   requires x >= 0
+  opaque
   ensures r == x + 1
 {
   r := x + 1;
 }
 
-procedure dec(x: int) returns (r: int)
+procedure dec(x: int, out r: int)
   requires x > 0
+  opaque
   ensures r == x - 1
 {
   r := x - 1;
 }
 
-procedure main() {
+procedure main()
+  opaque
+{
   var x: int := 5;
   assert x > 0;
 }'
@@ -261,14 +279,17 @@ echo ""
 # ---- Test 7: Procedure call inside if-then-else ----
 echo "--- Test 7: Call inside if-then-else (GOTO output) ---"
 
-build_goto "nested_call" 'procedure inc(x: int) returns (r: int)
+build_goto "nested_call" 'procedure inc(x: int, out r: int)
   requires x >= 0
+  opaque
   ensures r == x + 1
 {
   r := x + 1;
 }
 
-procedure main() {
+procedure main()
+  opaque
+{
   var a: int := 3;
   var b: int;
   if (a > 0) {
@@ -297,14 +318,17 @@ echo ""
 # ---- Test 8: Procedure call inside loop ----
 echo "--- Test 8: Call inside loop (GOTO output) ---"
 
-build_goto "loop_call" 'procedure inc(x: int) returns (r: int)
+build_goto "loop_call" 'procedure inc(x: int, out r: int)
   requires x >= 0
+  opaque
   ensures r == x + 1
 {
   r := x + 1;
 }
 
-procedure main() {
+procedure main()
+  opaque
+{
   var i: int := 0;
   var s: int := 0;
   while (i < 3)

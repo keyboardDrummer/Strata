@@ -23,6 +23,7 @@ public section
 
 private def emptyMd : MetaData := .empty
 private def mkMd (e : StmtExpr) : StmtExprMd := { val := e, source := none }
+private def mkVarMd (v : Variable) : VariableMd := { val := v, source := none }
 private def mkTy (t : HighType) : HighTypeMd := { val := t, source := none }
 
 /-- Info about a function whose multiple outputs have been collapsed into a result datatype. -/
@@ -32,6 +33,8 @@ private structure MultiOutInfo where
   constructorName : String
   /-- Original output parameters (name, type). -/
   outputs : List Parameter
+  /-- Number of input parameters (used to detect implicit heap args at call sites). -/
+  inputCount : Nat
 
 /-- Identify bodiless functions with multiple outputs and build info records. -/
 private def collectMultiOutFunctions (funcs : List Procedure) : List MultiOutInfo :=
@@ -42,6 +45,7 @@ private def collectMultiOutFunctions (funcs : List Procedure) : List MultiOutInf
         resultTypeName := s!"{f.name.text}$result"
         constructorName := s!"{f.name.text}$result$mk"
         outputs := f.outputs
+        inputCount := f.inputs.length
       }
     else none
 
@@ -71,71 +75,51 @@ private def isAssume (stmt : StmtExprMd) : Bool :=
 
 /-- Rewrite a single multi-output Assign into a temp declaration + destructuring
     assignments. Any `Assume` statements from `following` that appear immediately
-    after the call are collected and placed between the temp declaration and the
-    destructuring assignments, so they observe the pre-call variable values.
+    after the call are collected and placed after the destructuring assignments,
+    so they observe the post-call variable values.
     Returns the rewritten statements and the number of consumed following statements. -/
 private def rewriteAssign (infoMap : Std.HashMap String MultiOutInfo)
-    (targets : List StmtExprMd) (callee : Identifier) (args : List StmtExprMd)
+    (targets : List VariableMd) (callee : Identifier) (args : List StmtExprMd)
     (callSrc : Option FileRange) (callMd : MetaData)
-    (following : List StmtExprMd) : Option (List StmtExprMd × Nat) :=
+    (following : List StmtExprMd) (counter : Nat) : Option (List StmtExprMd × Nat) :=
   match infoMap.get? callee.text with
   | some info =>
-    if targets.length == info.outputs.length then
-      let tempName := s!"${callee.text}$temp"
-      let tempParam : Parameter := { name := mkId tempName, type := mkTy (.UserDefined (mkId info.resultTypeName)) }
-      let tempDecl := mkMd (.LocalVariable [tempParam]
-        (some ⟨.StaticCall callee args, callSrc, callMd⟩))
+    if targets.length ≤ info.outputs.length then
+      let tempName := s!"${callee.text}$temp{counter}"
+      let fullArgs := args
+      let tempDecl := mkMd (.Assign [mkVarMd (.Declare ⟨mkId tempName, mkTy (.UserDefined (mkId info.resultTypeName))⟩)]
+          ⟨.StaticCall callee fullArgs, callSrc, callMd⟩)
       let assigns := targets.zipIdx.map fun (tgt, i) =>
         mkMd (.Assign [tgt]
           (mkMd (.StaticCall (mkId (destructorName info i))
-            [mkMd (.Identifier (mkId tempName))])))
+            [mkMd (.Var (.Local (mkId tempName)))])))
       -- Collect any Assume statements that immediately follow the call.
-      -- These must be placed before the destructuring assignments so they
-      -- observe the pre-call values of variables like $heap.
+      -- These are placed after the destructuring assignments so they
+      -- observe the post-call values of output variables.
       let assumes := following.takeWhile isAssume
       let consumed := assumes.length
-      some (tempDecl :: assumes ++ assigns, consumed)
+      some (tempDecl :: assigns ++ assumes, consumed)
     else none
   | none => none
 
 /-- Rewrite a statement list, replacing multi-output call patterns.
     When a multi-output Assign is followed by Assume statements (inserted by
-    the contract pass), the Assumes are hoisted before the destructuring
-    assignments so they reference pre-call variable values. -/
+    the contract pass), the Assumes are placed after the destructuring
+    assignments so they reference post-call variable values. -/
 private def rewriteStmts (infoMap : Std.HashMap String MultiOutInfo)
     (stmts : List StmtExprMd) : List StmtExprMd :=
-  let rec go (remaining : List StmtExprMd) (acc : List StmtExprMd) : List StmtExprMd :=
+  let rec go (remaining : List StmtExprMd) (acc : List StmtExprMd) (counter : Nat) : List StmtExprMd :=
     match remaining with
     | [] => acc.reverse
     | stmt :: rest =>
       match stmt.val with
       | .Assign targets ⟨.StaticCall callee args, callSrc, callMd⟩ =>
-        match rewriteAssign infoMap targets callee args callSrc callMd rest with
-        | some (expanded, consumed) => go (rest.drop consumed) (expanded.reverse ++ acc)
-        | none => go rest (stmt :: acc)
-      | .LocalVariable params (some ⟨.StaticCall callee args, callSrc, callMd⟩) =>
-        match infoMap.get? callee.text with
-        | some info =>
-          if info.outputs.length > 1 then
-            let tempName := s!"${callee.text}$temp"
-            let tempParam : Parameter := { name := mkId tempName, type := mkTy (.UserDefined (mkId info.resultTypeName)) }
-            let tempDecl := mkMd (.LocalVariable [tempParam]
-              (some ⟨.StaticCall callee args, callSrc, callMd⟩))
-            -- Collect any Assume statements that immediately follow the call.
-            let assumes := rest.takeWhile isAssume
-            let consumed := assumes.length
-            -- Declare each original output parameter as a local variable initialized
-            -- from the corresponding destructor of the result datatype.
-            let localDecls := params.zipIdx.map fun (p, i) =>
-              mkMd (.LocalVariable [p]
-                (some (mkMd (.StaticCall (mkId (destructorName info i))
-                  [mkMd (.Identifier (mkId tempName))]))))
-            go (rest.drop consumed) ((assumes ++ localDecls).reverse ++ (tempDecl :: acc))
-          else go rest (stmt :: acc)
-        | none => go rest (stmt :: acc)
-      | _ => go rest (stmt :: acc)
+        match rewriteAssign infoMap targets callee args callSrc callMd rest counter with
+        | some (expanded, consumed) => go (rest.drop consumed) (expanded.reverse ++ acc) (counter + 1)
+        | none => go rest (stmt :: acc) counter
+      | _ => go rest (stmt :: acc) counter
   termination_by remaining.length
-  go stmts []
+  go stmts [] 0
 
 /-- Rewrite blocks in a StmtExprMd tree to handle multi-output calls. -/
 private def rewriteExpr (infoMap : Std.HashMap String MultiOutInfo)
