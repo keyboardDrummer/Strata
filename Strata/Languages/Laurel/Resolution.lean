@@ -34,7 +34,7 @@ resolved sub-trees (e.g. a procedure's parameters already have their IDs).
 
 ### Definition nodes (introduce a name into scope)
 - `Variable.Declare` — local variable declaration (in `Assign` targets or `Var`)
-- `StmtExpr.Forall` / `StmtExpr.Exists` — quantifier-bound variable
+- `StmtExpr.Quantifier` — quantifier-bound variable
 - `Parameter` — procedure parameter
 - `Procedure` — procedure definition
 - `Field` — field on a composite type
@@ -304,6 +304,9 @@ def resolveHighType (ty : HighTypeMd) : ResolveM HighTypeMd := do
   | .Intersection tys =>
     let tys' ← tys.mapM resolveHighType
     pure (.Intersection tys')
+  | .MultiValuedExpr tys =>
+    let tys' ← tys.mapM resolveHighType
+    pure (.MultiValuedExpr tys')
   | other => pure other
   return ⟨val', ty.source, ty.md⟩
 
@@ -359,6 +362,32 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
         let name' ← defineNameCheckDup param.name (.var param.name ty')
         pure (⟨.Declare ⟨name', ty'⟩, vs, vm⟩ : VariableMd)
     let value' ← resolveStmtExpr value
+    -- Check that LHS target count matches the number of outputs from the RHS
+    let expectedOutputCount ← match value'.val with
+      | .StaticCall callee _ => do
+        let s ← get
+        match s.scope.get? callee.text with
+        | some (_, .staticProcedure proc) => pure (some proc.outputs.length)
+        | some (_, .instanceProcedure _ proc) => pure (some proc.outputs.length)
+        | _ => pure none
+      | .InstanceCall _ callee _ => do
+        let s ← get
+        match s.scope.get? callee.text with
+        | some (_, .instanceProcedure _ proc) => pure (some proc.outputs.length)
+        | some (_, .staticProcedure proc) => pure (some proc.outputs.length)
+        | _ => pure none
+      | _ => pure none
+    match expectedOutputCount with
+    | some expected =>
+      if targets'.length != expected then
+        let calleeName := match value'.val with
+          | .StaticCall callee _ => callee.text
+          | .InstanceCall _ callee _ => callee.text
+          | _ => "unknown"
+        let diag := coreMd.toDiagnostic
+          s!"Assignment target count mismatch: {targets'.length} targets but '{calleeName}' returns {expected} values"
+        modify fun s => { s with errors := s.errors.push diag }
+    | none => pure ()
     pure (.Assign targets' value')
   | .Var (.Field target fieldName) =>
     let target' ← resolveStmtExpr target
@@ -397,20 +426,13 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
     let callee' ← resolveRef callee coreMd
     let args' ← args.mapM resolveStmtExpr
     pure (.InstanceCall target' callee' args')
-  | .Forall param trigger body =>
+  | .Quantifier mode param trigger body =>
     withScope do
       let paramTy' ← resolveHighType param.type
       let paramName' ← defineNameCheckDup param.name (.quantifierVar param.name paramTy')
       let trigger' ← trigger.attach.mapM (fun pv => have := pv.property; resolveStmtExpr pv.val)
       let body' ← resolveStmtExpr body
-      pure (.Forall ⟨paramName', paramTy'⟩ trigger' body')
-  | .Exists param trigger body =>
-    withScope do
-      let paramTy' ← resolveHighType param.type
-      let paramName' ← defineNameCheckDup param.name (.quantifierVar param.name paramTy')
-      let trigger' ← trigger.attach.mapM (fun pv => have := pv.property; resolveStmtExpr pv.val)
-      let body' ← resolveStmtExpr body
-      pure (.Exists ⟨paramName', paramTy'⟩ trigger' body')
+      pure (.Quantifier mode ⟨paramName', paramTy'⟩ trigger' body')
   | .Assigned name =>
     let name' ← resolveStmtExpr name
     pure (.Assigned name')
@@ -608,6 +630,7 @@ private def collectHighType (map : Std.HashMap Nat ResolvedNode) (ty : HighTypeM
     args.foldl collectHighType map
   | .Pure base => collectHighType map base
   | .Intersection tys => tys.foldl collectHighType map
+  | .MultiValuedExpr tys => tys.foldl collectHighType map
   | _ => map
 
 private def collectStmtExpr (map : Std.HashMap Nat ResolvedNode) (expr : StmtExprMd)
@@ -658,12 +681,7 @@ private def collectStmtExpr (map : Std.HashMap Nat ResolvedNode) (expr : StmtExp
   | .InstanceCall target _ args =>
     let map := collectStmtExpr map target
     args.foldl collectStmtExpr map
-  | .Forall param trigger body =>
-    let map := register map param.name (.quantifierVar param.name param.type)
-    let map := collectHighType map param.type
-    let map := match trigger with | some t => collectStmtExpr map t | none => map
-    collectStmtExpr map body
-  | .Exists param trigger body =>
+  | .Quantifier _ param trigger body =>
     let map := register map param.name (.quantifierVar param.name param.type)
     let map := collectHighType map param.type
     let map := match trigger with | some t => collectStmtExpr map t | none => map

@@ -262,24 +262,19 @@ def translateExpr (expr : StmtExprMd)
           let re ← translateExpr arg boundVars isPureContext
           return .app () acc re) fnOp
   | .Block [single] _ => translateExpr single boundVars isPureContext
-  | .Forall ⟨ name, ty ⟩ trigger body =>
+  | .Quantifier mode ⟨ name, ty ⟩ trigger body =>
       let coreTy ← translateType ty
       let coreBody ← translateExpr body (name :: boundVars) isPureContext
       match _: trigger with
       | some trig =>
         let coreTrig ← translateExpr trig (name :: boundVars) isPureContext
-        return LExpr.allTr () name.text (some coreTy) coreTrig coreBody
+        match mode with
+        | .Forall => return LExpr.allTr () name.text (some coreTy) coreTrig coreBody
+        | .Exists => return LExpr.existTr () name.text (some coreTy) coreTrig coreBody
       | none =>
-        return LExpr.all () name.text (some coreTy) coreBody
-  | .Exists ⟨ name, ty ⟩ trigger body =>
-      let coreTy ← translateType ty
-      let coreBody ← translateExpr body (name :: boundVars) isPureContext
-      match _: trigger with
-      | some trig =>
-        let coreTrig ← translateExpr trig (name :: boundVars) isPureContext
-        return LExpr.existTr () name.text (some coreTy) coreTrig coreBody
-      | none =>
-        return LExpr.exist () name.text (some coreTy) coreBody
+        match mode with
+        | .Forall => return LExpr.all () name.text (some coreTy) coreBody
+        | .Exists => return LExpr.exist () name.text (some coreTy) coreBody
   | .Hole _ _ =>
       -- Holes should have been eliminated before translation.
       disallowed md "holes should have been eliminated before translation"
@@ -306,7 +301,8 @@ def translateExpr (expr : StmtExprMd)
       return .app () (.abs () name.text (some coreMonoType) bodyExpr) valueExpr
   | .Block (⟨ .Var (.Declare _), innerSrc, innerMd⟩ :: rest) label => do
     _ ← disallowed (fileRangeToCoreMd innerSrc innerMd) "local variables in functions must have initializers"
-    translateExpr { val := StmtExpr.Block rest label, source := innerSrc, md := innerMd } boundVars isPureContext  | .Block (⟨ .IfThenElse cond thenBranch (some elseBranch), innerSrc, innerMd⟩ :: rest) label =>
+    translateExpr { val := StmtExpr.Block rest label, source := innerSrc, md := innerMd } boundVars isPureContext
+  | .Block (⟨ .IfThenElse cond thenBranch (some elseBranch), innerSrc, innerMd⟩ :: rest) label =>
     disallowed (fileRangeToCoreMd innerSrc innerMd) "if-then-else only supported as the last statement in a block"
 
   | .IsType _ _ =>
@@ -490,8 +486,8 @@ def translateStmt (stmt : StmtExprMd)
         exprAsUnusedInit stmt md
       else
         let coreArgs ← args.mapM (fun a => translateExpr a)
-        -- Synthesize throwaway LHS variables so Core arity checking
-        -- passes (lhs.length == outputs.length).
+        -- Generate throwaway LHS variables for all outputs so Core arity
+        -- checking passes (lhs.length == outputs.length).
         let outputs := match model.get callee with
           | .staticProcedure proc => proc.outputs
           | .instanceProcedure _ proc => proc.outputs

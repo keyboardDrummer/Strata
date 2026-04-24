@@ -79,8 +79,7 @@ def collectExpr (expr : StmtExpr) : StateM AnalysisResult Unit := do
   | .ReferenceEquals l r => collectExprMd l; collectExprMd r
   | .AsType t _ => collectExprMd t
   | .IsType t _ => collectExprMd t
-  | .Forall _ trigger b => if let some t := trigger then collectExprMd t; collectExprMd b
-  | .Exists _ trigger b => if let some t := trigger then collectExprMd t; collectExprMd b
+  | .Quantifier _ _ trigger b => if let some t := trigger then collectExprMd t; collectExprMd b
   | .Assigned n => collectExprMd n
   | .Old v => collectExprMd v
   | .Fresh v => collectExprMd v
@@ -279,13 +278,20 @@ where
         if calleeWritesHeap then
           if valueUsed then
             let freshVar ← freshVarName
-            let varDecl := mkMd (.Var (.Declare ⟨freshVar, computeExprType model exprMd⟩))
             let callWithHeap := ⟨ .Assign
-              [mkVarMd (.Local heapVar), mkVarMd (.Local freshVar)]
+              [mkVarMd (.Local heapVar), mkVarMd (.Declare ⟨freshVar, computeExprType model exprMd⟩)]
               (⟨ .StaticCall callee (mkMd (.Var (.Local heapVar)) :: args'), source, md ⟩), source, md ⟩
-            return ⟨ .Block [varDecl, callWithHeap, mkMd (.Var (.Local freshVar))] none, source, md ⟩
+            return ⟨ .Block [callWithHeap, mkMd (.Var (.Local freshVar))] none, source, md ⟩
           else
-            return ⟨ .Assign [mkVarMd (.Local heapVar)] (⟨ .StaticCall callee (mkMd (.Var (.Local heapVar)) :: args'), source, md ⟩), source, md ⟩
+            -- Generate throwaway Declare targets for any non-heap outputs
+            let procOutputs := match model.get callee with
+              | .staticProcedure proc => proc.outputs
+              | .instanceProcedure _ proc => proc.outputs
+              | _ => []
+            let extraTargets ← procOutputs.mapM fun out => do
+              pure (mkVarMd (.Declare ⟨← freshVarName, out.type⟩))
+            let allTargets := mkVarMd (.Local heapVar) :: extraTargets
+            return ⟨ .Assign allTargets (⟨ .StaticCall callee (mkMd (.Var (.Local heapVar)) :: args'), source, md ⟩), source, md ⟩
         else if calleeReadsHeap then
           return ⟨ .StaticCall callee (mkMd (.Var (.Local heapVar)) :: args'), source, md ⟩
         else
@@ -404,12 +410,9 @@ where
         let assertStmt := ⟨ .Assert { condition := isCheck }, source, md ⟩
         return ⟨ .Block [assertStmt, t'] none, source, md ⟩
     | .IsType t ty => return ⟨ .IsType (← recurse t) ty, source, md ⟩
-    | .Forall p trigger b =>
+    | .Quantifier mode p trigger b =>
       let trigger' ← trigger.attach.mapM fun ⟨t, _⟩ => recurse t
-      return ⟨.Forall p trigger' (← recurse b), source, md⟩
-    | .Exists p trigger b =>
-      let trigger' ← trigger.attach.mapM fun ⟨t, _⟩ => recurse t
-      return ⟨.Exists p trigger' (← recurse b), source, md⟩
+      return ⟨.Quantifier mode p trigger' (← recurse b), source, md⟩
     | .Assigned n => return ⟨ .Assigned (← recurse n), source, md ⟩
     | .Old v => return ⟨ .Old (← recurse v), source, md ⟩
     | .Fresh v => return ⟨ .Fresh (← recurse v), source, md ⟩

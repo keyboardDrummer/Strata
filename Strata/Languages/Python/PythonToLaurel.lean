@@ -1195,12 +1195,15 @@ partial def translateAssign  (ctx : TranslationContext)
   let rhsIsCall := match rhs with | .Call _ _ _ _ => true | _ => false
   if let .Hole := rhs_trans.val then
   {
-    let havocStmts := mkHavocStmtsForUnmodeledCall ctx rhs md
+    let exceptHavoc :=
+      if rhsIsCall then
+        [mkStmtExprMdWithLoc (StmtExpr.Assign [stmtExprToVar maybeExceptVar] (mkStmtExprMd (.Hole false none))) md]
+      else []
     match lhs with
     | .Name _ n _ =>
       if n.val ∈ ctx.variableTypes.unzip.1 then
         let targetExpr := mkStmtExprMd (StmtExpr.Var (.Local n.val))
-        return (ctx, [mkStmtExprMd (StmtExpr.Assign [stmtExprToVar targetExpr] rhs_trans)] ++ havocStmts, true)
+        return (ctx, [mkStmtExprMd (StmtExpr.Assign [stmtExprToVar targetExpr] rhs_trans)] ++ exceptHavoc, true)
       else
         -- Use type annotation if it matches a known composite type
         let annType := annotation.map (fun a => pyExprToString a) |>.getD "Any"
@@ -1212,8 +1215,8 @@ partial def translateAssign  (ctx : TranslationContext)
           | _ => pure (AnyTy, "Any")
         let initStmt := mkVarDeclInit n.val varTy (mkStmtExprMd .Hole)
         let newctx := {ctx with variableTypes:=(n.val, trackType)::ctx.variableTypes}
-        return (newctx, [initStmt] ++ havocStmts, true)
-    | _ => return (ctx, [mkStmtExprMd .Hole] ++ havocStmts, false)
+        return (newctx, [initStmt] ++ exceptHavoc, true)
+    | _ => return (ctx, [mkStmtExprMd .Hole] ++ exceptHavoc, false)
   }
   let mut newctx := ctx
   match lhs with
@@ -1549,7 +1552,6 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
     -- When a call has no model (translates to Hole), also havoc maybe_except
     -- since an unmodeled call is a black box that could throw any exception.
     let havocStmts := mkHavocStmtsForUnmodeledCall ctx value md
-
 
     match expr.val with
     | .StaticCall fnname _ =>
@@ -2342,7 +2344,7 @@ def PreludeInfo.ofLaurelProgram (prog : Laurel.Program) : PreludeInfo where
         -- Use "Any" for all parameter types to match the Python→Laurel
         -- pipeline's Any-wrapping convention at call sites.
         let ins := p.inputs.map fun _ => "Any"
-        let outs := p.outputs.map fun _ => "Any"
+        let outs := p.outputs.map fun param => getHighTypeName param.type.val
         m.insert p.name.text { inputs := ins, outputs := outs }
   functionSignatures :=
     prog.staticProcedures.filterMap fun p =>
