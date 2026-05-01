@@ -129,7 +129,7 @@ private def laurelPipeline : Array LaurelPass := #[
       (desugarShortCircuit m p, [], {}) },
   { name := "LiftExpressionAssignments"
     run := fun p m =>
-      (liftExpressionAssignments m p, [], {}) },
+      (liftExpressionAssignments p m [], [], {}) },
   { name := "EliminateReturns"
     needsResolves := true
     run := fun p _m =>
@@ -240,6 +240,11 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
   }
   let fnResolveResult := resolve fnProgram (some model)
   let fnModel := fnResolveResult.model
+
+  -- Lift imperative expressions in the proof procedures
+  let imperativeCallees := coreProceduresList.map (·.name.text)
+  let liftedProgram := liftExpressionAssignments fnResolveResult.program fnModel imperativeCallees
+  let fnResolveResult := { fnResolveResult with program := liftedProgram }
 
   -- Reconstruct UnorderedCoreWithLaurelTypes from the resolved fnProgram so that
   -- identifiers introduced by eliminateMultipleOutputs have their uniqueId set.

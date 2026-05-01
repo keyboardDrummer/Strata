@@ -127,8 +127,7 @@ def translateType (ty : HighTypeMd) : TranslateM LMonoTy := do
       return .tcons "Composite" []
   | .TCore s => return .tcons s []
   | .TReal => return LMonoTy.real
-  | .Unknown =>
-    throwTypeDiagnostic ty "could not infer type"
+  | .Unknown => throwTypeDiagnostic ty "bug in Laurel: unknown type encountered while translating to Core"
   | _ => throwTypeDiagnostic ty "cannot translate type to Core: not supported yet"
 
 termination_by ty.val

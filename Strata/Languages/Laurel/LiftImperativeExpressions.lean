@@ -82,6 +82,8 @@ structure LiftState where
   condCounter : Nat := 0
   /-- All procedures in the program, used to look up return types of imperative calls -/
   procedures : List Procedure := []
+  /-- Names of callees whose calls should be treated as imperative (lifted) -/
+  imperativeCallees : List String := []
 
 @[expose] abbrev LiftM := StateM LiftState
 
@@ -159,22 +161,20 @@ private def computeType (expr : StmtExprMd) : LiftM HighTypeMd := do
   return computeExprType s.model expr
 
 /-- Check if an expression contains any assignments or imperative calls (recursively). -/
-def containsAssignmentOrImperativeCall (model: SemanticModel) (expr : StmtExprMd) : Bool :=
+def containsAssignmentOrImperativeCall (imperativeCallees : List String) (expr : StmtExprMd) : Bool :=
   match expr with
   | AstNode.mk val _ =>
   match val with
   | .Assign .. => true
   | .StaticCall name args1 =>
-    (match model.get name with
-    | .staticProcedure proc => !proc.isFunctional
-    | _ => false) ||
-      args1.attach.any (fun x => containsAssignmentOrImperativeCall model x.val)
-  | .PrimitiveOp _ args2 => args2.attach.any (fun x => containsAssignmentOrImperativeCall model x.val)
-  | .Block stmts _ => stmts.attach.any (fun x => containsAssignmentOrImperativeCall model x.val)
+    imperativeCallees.contains name.text ||
+      args1.attach.any (fun x => containsAssignmentOrImperativeCall imperativeCallees x.val)
+  | .PrimitiveOp _ args2 => args2.attach.any (fun x => containsAssignmentOrImperativeCall imperativeCallees x.val)
+  | .Block stmts _ => stmts.attach.any (fun x => containsAssignmentOrImperativeCall imperativeCallees x.val)
   | .IfThenElse cond th el =>
-      containsAssignmentOrImperativeCall model cond ||
-      containsAssignmentOrImperativeCall model th ||
-      match el with | some e => containsAssignmentOrImperativeCall model e | none => false
+      containsAssignmentOrImperativeCall imperativeCallees cond ||
+      containsAssignmentOrImperativeCall imperativeCallees th ||
+      match el with | some e => containsAssignmentOrImperativeCall imperativeCallees e | none => false
   | _ => false
   termination_by expr
   decreasing_by
@@ -269,10 +269,10 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       return ⟨.PrimitiveOp op seqArgs.reverse, source⟩
 
   | .StaticCall callee args =>
-    let model := (← get).model
+    let imperativeCallees := (← get).imperativeCallees
     let seqArgs ← args.reverse.mapM transformExpr
     let seqCall := ⟨.StaticCall callee seqArgs.reverse, source⟩
-    if model.isFunction callee then
+    if !imperativeCallees.contains callee.text then
       return seqCall
     else
       -- Imperative call in expression position: lift it like an assignment
@@ -286,10 +286,10 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       return bare (.Var (.Local callResultVar))
 
   | .IfThenElse cond thenBranch elseBranch =>
-      let model :=  (← get).model
-      let thenHasAssign := containsAssignmentOrImperativeCall model thenBranch
+      let imperativeCallees := (← get).imperativeCallees
+      let thenHasAssign := containsAssignmentOrImperativeCall imperativeCallees thenBranch
       let elseHasAssign := match elseBranch with
-        | some e => containsAssignmentOrImperativeCall model e
+        | some e => containsAssignmentOrImperativeCall imperativeCallees e
         | none => false
       if thenHasAssign || elseHasAssign then
         -- Lift the entire if-then-else. Introduce a fresh variable for the result.
@@ -393,8 +393,8 @@ def transformStmt (stmt : StmtExprMd) : LiftM (List StmtExprMd) := do
       | AstNode.mk value _ =>
       match _: value with
       | .StaticCall callee args =>
-          let model := (← get).model
-          if model.isFunction callee then
+          let imperativeCallees := (← get).imperativeCallees
+          if !imperativeCallees.contains callee.text then
             let seqValue ← transformExpr valueMd
             let prepends ← takePrepends
             modify fun s => { s with subst := [] }
@@ -484,11 +484,20 @@ def transformProcedure (proc : Procedure) : LiftM Procedure := do
 
 /--
 Transform a program to lift all assignments that occur in an expression context.
+When `procedureNames` is non-empty, only procedures whose name appears in the
+list are transformed; all others are left unchanged. When `procedureNames` is
+empty, no procedures are transformed.
 -/
-def liftExpressionAssignments (model: SemanticModel) (program : Program) : Program :=
-  let initState : LiftState := { model := model }
-  let (seqProcedures, _) := (program.staticProcedures.mapM transformProcedure).run initState
-  { program with staticProcedures := seqProcedures }
+def liftExpressionAssignments (program : Program)
+    (model : SemanticModel) (imperativeCallees : List String) : Program :=
+  if imperativeCallees.isEmpty then program
+  else
+    let initState : LiftState := { model := model, imperativeCallees := imperativeCallees }
+    let transform := program.staticProcedures.mapM fun proc =>
+      if imperativeCallees.contains proc.name.text then transformProcedure proc
+      else pure proc
+    let (seqProcedures, _) := transform.run initState
+    { program with staticProcedures := seqProcedures }
 
 end -- public section
 end Laurel
