@@ -6,4 +6,4 @@ elan install "$(cat lean-toolchain)"
 
 # Build and test to populate the Lake cache
 lake build
-lake test
+lake test -- --exclude Languages.Python
