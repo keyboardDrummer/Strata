@@ -10,6 +10,7 @@ import Strata.Languages.Laurel.DesugarShortCircuit
 import Strata.Languages.Laurel.EliminateReturnsInExpression
 import Strata.Languages.Laurel.EliminateReturnStatements
 import Strata.Languages.Laurel.EliminateValueReturns
+import Strata.Languages.Laurel.InlineLocalVariablesInExpressions
 import Strata.Languages.Laurel.ConstrainedTypeElim
 import Strata.Languages.Laurel.ContractPass
 import Strata.Languages.Laurel.EliminateMultipleOutputs
@@ -224,6 +225,7 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
   let (program, model, passDiags, stats) ← runLaurelPasses options program
   let unorderedCore := transparencyPass program
   let unorderedCore := eliminateMultipleOutputs unorderedCore
+  let unorderedCore := inlineLocalVariablesInExpressions unorderedCore
 
   let coreProceduresList := unorderedCore.coreProcedures.map Prod.fst
   let fnProgram : Program := {
