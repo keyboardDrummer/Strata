@@ -80,6 +80,7 @@ procedure nestedImpureStatementsAndOpaque()
 // An imperative procedure call in expression position is lifted before the
 // surrounding expression is evaluated.
 procedure imperativeProc(x: int) returns (r: int)
+
   opaque
   ensures r == x + 1
 {

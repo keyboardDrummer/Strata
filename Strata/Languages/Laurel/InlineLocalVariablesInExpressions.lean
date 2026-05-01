@@ -65,7 +65,7 @@ private def inlineLocalsNode (expr : StmtExprMd) : StmtExprMd :=
     let stmts' := inlineLocalsInStmts stmts
     match stmts' with
     | [single] => single
-    | _ => ⟨.Block stmts' label, expr.source, expr.md⟩
+    | _ => ⟨.Block stmts' label, expr.source⟩
   | _ => expr
 
 /-- Apply local-variable inlining to all functional procedure bodies. -/

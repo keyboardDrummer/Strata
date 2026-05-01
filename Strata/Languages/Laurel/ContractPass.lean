@@ -36,14 +36,8 @@ namespace Strata.Laurel
 
 public section
 
-private def emptyMd : MetaData := .empty
-
 private def mkMd (e : StmtExpr) : StmtExprMd := { val := e, source := none }
 private def mkVarMd (v : Variable) : VariableMd := { val := v, source := none }
-
-/-- Create a `StmtExprMd` with a property summary in its metadata. -/
-private def mkMdWithSummary (e : StmtExpr) (summary : String) : StmtExprMd :=
-  ⟨e, none, emptyMd.withPropertySummary summary⟩
 
 /-- Build a conjunction of expressions. Returns `LiteralBool true` for an empty list. -/
 private def conjoin (exprs : List StmtExprMd) : StmtExprMd :=
@@ -164,18 +158,18 @@ private def transformProcBody (proc : Procedure) (info : ContractInfo) : Body :=
   -- Use the source location from the first precondition for the assume node
   let preAssume : List StmtExprMd :=
     if info.hasPreCondition then
-      let (preSrc, preMd) := match proc.preconditions.head? with
-        | some pc => (pc.condition.source, pc.condition.md)
-        | none => (none, emptyMd)
-      [⟨.Assume (mkCall info.preName inputArgs), preSrc, preMd⟩]
+      let preSrc := match proc.preconditions.head? with
+        | some pc => pc.condition.source
+        | none => none
+      [⟨.Assume (mkCall info.preName inputArgs), preSrc⟩]
     else []
   let postAssert : List StmtExprMd :=
     if info.hasPostCondition then
-      -- Use the source location and metadata from the first postcondition so
+      -- Use the source location from the first postcondition so
       -- the diagnostic carries the source location of the `ensures` clause.
-      let (baseSrc, baseMd) := match postconds.head? with
-        | some pc => (pc.condition.source, pc.condition.md)
-        | none => (none, emptyMd)
+      let baseSrc := match postconds.head? with
+        | some pc => pc.condition.source
+        | none => none
       let summary := info.postSummary.getD "postcondition"
       -- Directly assert the postcondition conjunction rather than calling $post.
       -- The $post procedure re-invokes the original (opaque) procedure to obtain
@@ -183,15 +177,15 @@ private def transformProcBody (proc : Procedure) (info : ContractInfo) : Body :=
       -- here the output variables (e.g. $heap) are already in scope with their
       -- actual values, so we assert the postcondition directly.
       [⟨.Assert { condition := conjoin (postconds.map (·.condition)), summary := some summary },
-        baseSrc, baseMd.withPropertySummary summary⟩]
+        baseSrc⟩]
     else []
   match proc.body with
   | .Transparent body =>
-    .Transparent ⟨.Block (preAssume ++ [body] ++ postAssert) none, body.source, emptyMd ⟩
+    .Transparent ⟨.Block (preAssume ++ [body] ++ postAssert) none, body.source⟩
   | .Opaque _ (some impl) _ =>
-    .Opaque [] (some ⟨.Block (preAssume ++ [impl] ++ postAssert) none, impl.source, emptyMd⟩)  []
+    .Opaque [] (some ⟨.Block (preAssume ++ [impl] ++ postAssert) none, impl.source⟩)  []
   | .Opaque _ none _ | .Abstract _ =>
-    .Opaque [] (some ⟨ .Block [] none, none, emptyMd⟩)  []
+    .Opaque [] (some ⟨ .Block [] none, none⟩)  []
   | b => b
 
 /-- Convert assignment targets to variable reference expressions. -/
@@ -210,22 +204,19 @@ private def targetsToArgs (targets : List (AstNode Variable)) : List StmtExprMd 
     the call arguments and the assigned target variables. -/
 private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
     (e : StmtExprMd) : List StmtExprMd :=
-  let md := e.md
   let src := e.source
-  let mkWithMd (se : StmtExpr) : StmtExprMd := ⟨se, src, md⟩
-  let mkWithMdSummary (se : StmtExpr) (summary : String) : StmtExprMd :=
-    ⟨se, src, md.withPropertySummary summary⟩
+  let mkWithSrc (se : StmtExpr) : StmtExprMd := ⟨se, src⟩
   match e.val with
   | .Assign targets (.mk (.StaticCall callee args) ..) =>
     match contractInfoMap.get? callee.text with
     | some info =>
       let fullArgs := info.implicitArgs ++ args
       let preAssert := if info.hasPreCondition
-        then [mkWithMdSummary (.Assert { condition := mkCall info.preName fullArgs, summary := info.preSummary }) (info.preSummary.getD "precondition")] else []
+        then [mkWithSrc (.Assert { condition := mkCall info.preName fullArgs, summary := info.preSummary })] else []
       -- Assume $post *after* the assignment, passing both the call arguments
       -- and the assigned target variables so the postcondition can reference outputs.
       let postAssume := if info.hasPostCondition
-        then [mkWithMd (.Assume (mkCall info.postName (fullArgs ++ targetsToArgs targets)))] else []
+        then [mkWithSrc (.Assume (mkCall info.postName (fullArgs ++ targetsToArgs targets)))] else []
       preAssert ++ [e] ++ postAssume
     | none => [e]
   | .StaticCall callee args =>
@@ -233,7 +224,7 @@ private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
     | some info =>
       let fullArgs := info.implicitArgs ++ args
       let preAssert := if info.hasPreCondition
-        then [mkWithMdSummary (.Assert { condition := mkCall info.preName fullArgs, summary := info.preSummary }) (info.preSummary.getD "precondition")] else []
+        then [mkWithSrc (.Assert { condition := mkCall info.preName fullArgs, summary := info.preSummary })] else []
       preAssert ++ [e]
     | none => [e]
   | _ => [e]
@@ -249,7 +240,7 @@ private def rewriteCallSites (contractInfoMap : Std.HashMap String ContractInfo)
     | .Block stmts label =>
       let stmts' := stmts.flatMap (rewriteStmt contractInfoMap)
       if stmts'.length == stmts.length then e
-      else ⟨.Block stmts' label, e.source, e.md⟩
+      else ⟨.Block stmts' label, e.source⟩
     | _ => e) expr
   -- Handle top-level non-Block statements (e.g., bare Assign or StaticCall)
   let expanded := rewriteStmt contractInfoMap result

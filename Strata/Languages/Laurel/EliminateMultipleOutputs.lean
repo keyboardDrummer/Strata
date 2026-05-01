@@ -21,7 +21,7 @@ namespace Strata.Laurel
 
 public section
 
-private def emptyMd : MetaData := .empty
+
 private def mkMd (e : StmtExpr) : StmtExprMd := { val := e, source := none }
 private def mkVarMd (v : Variable) : VariableMd := { val := v, source := none }
 private def mkTy (t : HighType) : HighTypeMd := { val := t, source := none }
@@ -126,7 +126,7 @@ private def rewriteExpr (infoMap : Std.HashMap String MultiOutInfo)
     (expr : StmtExprMd) : StmtExprMd :=
   mapStmtExpr (fun e =>
     match e.val with
-    | .Block stmts label => ⟨.Block (rewriteStmts infoMap stmts) label, e.source, e.md⟩
+    | .Block stmts label => ⟨.Block (rewriteStmts infoMap stmts) label, e.source⟩
     | _ => e) expr
 
 /-- Rewrite all procedure bodies. -/

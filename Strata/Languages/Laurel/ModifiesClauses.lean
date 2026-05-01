@@ -126,7 +126,7 @@ def buildModifiesEnsures (proc: Procedure) (model: SemanticModel) (modifiesExprs
   let implBody := mkMd <| .PrimitiveOp .Implies [antecedent, heapUnchanged]
   -- Build: forall $obj: Composite, $fld: Field => ...
   let innerForall := mkMd <| .Quantifier .Forall ⟨ fldName, { val := .TTypedField { val := .TInt, source := none }, source := none } ⟩ none implBody
-  let outerForall : StmtExprMd := { val := .Quantifier .Forall ⟨ objName, { val := .UserDefined "Composite", source := none } ⟩ none innerForall, source := none, md := proc.name.md }
+  let outerForall : StmtExprMd := { val := .Quantifier .Forall ⟨ objName, { val := .UserDefined "Composite", source := none } ⟩ none innerForall, source := proc.name.source }
   some outerForall
 
 /--
@@ -146,6 +146,9 @@ def hasWildcardModifies (modifiesExprs : List StmtExprMd) : Bool :=
 Transform a single procedure: if it has modifies clauses, generate the frame
 condition and conjoin it with the postcondition, then clear the modifies list.
 
+If the procedure has `modifies *`, no frame condition is generated (the procedure
+may modify anything on the heap), and the modifies list is simply cleared.
+
 If the procedure has a `$heap` but no modifies clause, adds a postcondition
 that all allocated objects are preserved between heaps:
   `forall $obj: Composite, $fld: Field => $obj < $heap_in.nextReference ==> readField($heap_in, $obj, $fld) == readField($heap, $obj, $fld)`
@@ -158,14 +161,15 @@ def transformModifiesClauses (model: SemanticModel)
   match proc.body with
   | .External => .ok proc
   | .Opaque postconds impl modifiesExprs =>
-      if hasWildcardModifies modifiesExprs then
+      if hasModifiesWildcard modifiesExprs then
+        -- modifies * means the procedure can modify anything; no frame condition
         .ok { proc with body := .Opaque postconds impl [] }
       else if hasHeapOut proc then
         let heapInName : Identifier := "$heap_in"
         let heapName : Identifier := "$heap"
         let frameCondition := buildModifiesEnsures proc model modifiesExprs heapInName heapName
         let postconds' := match frameCondition with
-          | some frame => postconds ++ [{ condition := frame : Condition }]
+          | some frame => postconds ++ [{ condition := frame, summary := "modifies clause" }]
           | none => postconds
         .ok { proc with body := .Opaque postconds' impl [] }
       else
@@ -184,12 +188,12 @@ def filterBodyNonCompositeModifies (model : SemanticModel) (body : Body)
   | .Opaque posts impl mods =>
     let (kept, diags) := mods.foldl (fun (acc, ds) e =>
       match e.val with
-      | .All => (acc ++ [e], ds)
+      | .All => (acc ++ [e], ds)  -- wildcard is always kept
       | _ =>
         let ty := (computeExprType model e).val
         if isHeapRelevantType ty then (acc ++ [e], ds)
         else
-          (acc, ds ++ [(fileRangeToCoreMd e.source e.md).toDiagnostic s!"modifies clause entry has non-composite type '{formatHighTypeVal ty}' and will be ignored"])
+          (acc, ds ++ [diagnosticFromSource e.source s!"modifies clause entry has non-composite type '{formatHighTypeVal ty}' and will be ignored"])
     ) ([], [])
     (.Opaque posts impl kept, diags)
   | other => (other, [])

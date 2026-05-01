@@ -39,6 +39,7 @@ function impureFunction3(x: int): int
 
 procedure impureContractIsNotLegal1(x: int)
   requires x == impure()
+
   opaque
 {
   assert impure() == 1

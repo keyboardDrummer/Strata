@@ -118,8 +118,8 @@ private def laurelPipeline : Array LaurelPass := #[
       (p', diags, {}) },
   { name := "InferHoleTypes"
     run := fun p m =>
-      let (p', stats) := inferHoleTypes m p
-      (p', [], stats) },
+      let (p', diags, stats) := inferHoleTypes m p
+      (p', diags, stats) },
   { name := "EliminateHoles"
     run := fun p _m =>
       let (p', stats) := eliminateHoles p
@@ -152,7 +152,8 @@ program state after each named Laurel pass is written to
 private def runLaurelPasses (options : LaurelTranslateOptions) (program : Program)
     : PipelineM (Program × SemanticModel × List DiagnosticModel × Statistics) := do
   let program := { program with
-    staticProcedures := coreDefinitionsForLaurel.staticProcedures ++ program.staticProcedures
+    staticProcedures := coreDefinitionsForLaurel.staticProcedures ++ program.staticProcedures,
+    types := coreDefinitionsForLaurel.types ++ program.types
   }
 
   -- Step 0: the input program before any passes

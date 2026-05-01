@@ -46,14 +46,14 @@ private def mkMd (e : StmtExpr) : StmtExprMd := { val := e, source := none }
 def stripAssertAssume (expr : StmtExprMd) : StmtExprMd :=
   mapStmtExpr (fun e =>
     match e.val with
-    | .Assert _ | .Assume _ => ⟨.LiteralBool true, e.source, e.md⟩
+    | .Assert _ | .Assume _ => ⟨.LiteralBool true, e.source⟩
     | .Block stmts label =>
       let stmts' := stmts.filter fun s =>
         match s.val with | .LiteralBool true => false | _ => true
       match stmts' with
-      | [] => ⟨.LiteralBool true, e.source, e.md⟩
-      | [s] => if label.isNone then s else ⟨.Block [s] label, e.source, e.md⟩
-      | _ => ⟨.Block stmts' label, e.source, e.md⟩
+      | [] => ⟨.LiteralBool true, e.source⟩
+      | [s] => if label.isNone then s else ⟨.Block [s] label, e.source⟩
+      | _ => ⟨.Block stmts' label, e.source⟩
     | _ => e) expr
 
 /-- Rewrite StaticCall callees to their `$asFunction` versions,
@@ -64,7 +64,7 @@ private def rewriteCallsToFunctional (nonExternalNames : List String) (expr : St
     | .StaticCall callee args =>
       if nonExternalNames.contains callee.text then
         let funcCallee := { callee with text := callee.text ++ "$asFunction", uniqueId := none }
-        ⟨.StaticCall funcCallee args, e.source, e.md⟩
+        ⟨.StaticCall funcCallee args, e.source⟩
       else e
     | _ => e) expr
 

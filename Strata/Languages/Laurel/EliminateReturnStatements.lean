@@ -25,7 +25,7 @@ public section
 
 private def returnLabel : String := "$return"
 
-private def emptyMd : MetaData := .empty
+
 
 private def mkMd (e : StmtExpr) : StmtExprMd := { val := e, source := none }
 private def mkVarMd (v : Variable) : VariableMd := { val := v, source := none }
@@ -40,7 +40,7 @@ private def replaceReturn (outputs : List Parameter) (expr : StmtExprMd) : StmtE
       | [out] =>
         let assign := mkMd (.Assign [mkVarMd (.Local out.name)] val)
         let exit := mkMd (.Exit returnLabel)
-        ⟨.Block [assign, exit] none, e.source, e.md⟩
+        ⟨.Block [assign, exit] none, e.source⟩
       | _ => mkMd (.Exit returnLabel)
     | .Return none => mkMd (.Exit returnLabel)
     | _ => e) expr
