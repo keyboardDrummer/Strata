@@ -224,6 +224,7 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
   runPipelineM options.keepAllFilesPrefix do
   let (program, model, passDiags, stats) ← runLaurelPasses options program
   let unorderedCore := transparencyPass program
+  emit "transparencyPass" "core.st" unorderedCore
   let unorderedCore := eliminateMultipleOutputs unorderedCore
   let unorderedCore := inlineLocalVariablesInExpressions unorderedCore
 
@@ -260,6 +261,7 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
   if ! passDiags.isEmpty then
     return (none, passDiags, program, stats)
   else
+      emit "CoreWithLaurelTypes" "core.st" coreWithLaurelTypes
     let initState : TranslateState := { model := fnModel, overflowChecks := options.overflowChecks }
     let (coreProgramOption, translateState) :=
       runTranslateM initState (translateLaurelToCore options program coreWithLaurelTypes)
@@ -274,10 +276,10 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
           DiagnosticType.StrataBug]
       else allDiagnostics
 
-    let coreProgramOption :=
-      if translateState.coreProgramHasSuperfluousErrors then none else coreProgramOption
     if coreProgramOption.isSome then
       emit "Core" "core.st" coreProgramOption.get!
+    let coreProgramOption :=
+      if translateState.coreProgramHasSuperfluousErrors then none else coreProgramOption
     return (coreProgramOption, allDiagnostics, program, stats)
 
 /--

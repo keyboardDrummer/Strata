@@ -7,6 +7,7 @@ module
 
 public import Strata.Languages.Laurel.MapStmtExpr
 public import Strata.Languages.Laurel.Laurel
+import Strata.Languages.Laurel.Grammar.AbstractToConcreteTreeTranslator
 
 /-!
 ## Transparency Pass
@@ -129,6 +130,19 @@ def transparencyPass (program : Program) : UnorderedCoreWithLaurelTypes :=
     | .Datatype dt => some dt
     | _ => none
   { functions, coreProcedures, datatypes, constants := program.constants }
+
+open Std (Format ToFormat)
+
+def formatUnorderedCoreWithLaurelTypes (p : UnorderedCoreWithLaurelTypes) : Format :=
+  let datatypeFmts := p.datatypes.map ToFormat.format
+  let constantFmts := p.constants.map ToFormat.format
+  let functionFmts := p.functions.map ToFormat.format
+  let procFmts := p.coreProcedures.map fun (proc, post) =>
+    f!"{ToFormat.format proc}\n  // free postcondition: {ToFormat.format post}"
+  Format.joinSep (datatypeFmts ++ constantFmts ++ functionFmts ++ procFmts) "\n\n"
+
+instance : ToFormat UnorderedCoreWithLaurelTypes where
+  format := formatUnorderedCoreWithLaurelTypes
 
 end -- public section
 end Strata.Laurel
