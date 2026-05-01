@@ -258,7 +258,7 @@ def translateExpr (expr : StmtExprMd)
   | .StaticCall callee args =>
       -- In a pure context, only Core functions (not procedures) are allowed
       if isPureContext && !model.isFunction callee then
-        disallowed expr.source "calls to procedures are not supported in functions or contracts"
+        disallowed expr.source s!"calls to procedures are not supported in functions or contracts. Callee: {callee}"
       else
         let calleeName := adjustSelectorName callee.text (← get).proof
         let fnOp : Core.Expression.Expr := .op () ⟨calleeName, ()⟩ none

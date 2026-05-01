@@ -119,8 +119,7 @@ def transparencyPass (program : Program) : UnorderedCoreWithLaurelTypes :=
     let freePostcondition :=
       if functionHasBody funcCopy then mkFreePostcondition p
       else mkMd (.LiteralBool true)
-    let proc := { p with isFunctional := false,
-                         name := { p.name with text := p.name.text ++ "$proof", uniqueId := none } }
+    let proc := { p with isFunctional := false }
     (proc, freePostcondition)
   let datatypes := program.types.filterMap fun td => match td with
     | .Datatype dt => some dt

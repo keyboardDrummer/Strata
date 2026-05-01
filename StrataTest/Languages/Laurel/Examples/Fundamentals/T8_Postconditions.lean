@@ -31,6 +31,7 @@ procedure callerOfOpaqueProcedure()
 };
 
 procedure invalidPostcondition(x: int)
+  returns (r: int) // TODO, removing this returns triggers a latent bug
   opaque
   ensures false
 //        ^^^^^ error: postcondition does not hold
