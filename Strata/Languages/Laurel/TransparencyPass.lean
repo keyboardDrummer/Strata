@@ -108,16 +108,12 @@ For each procedure:
 def transparencyPass (program : Program) : UnorderedCoreWithLaurelTypes :=
   let nonExternal := program.staticProcedures.filter (fun p => !p.body.isExternal)
   let nonExternalNames := nonExternal.map (fun p => p.name.text)
-  -- Original-named function copies (as in the old code) for all procedures
-  let originalFunctions := program.staticProcedures.map fun proc =>
-    let body := match proc.body with
-      | .Transparent b => .Transparent (stripAssertAssume b)
-      | .Opaque _ _ _ => .Opaque [] none []
-      | x => x
-    { proc with isFunctional := true, body := body }
-  -- Additional $asFunction copies for non-external procedures
+  -- $asFunction copies for non-external procedures
   let asFunctions := nonExternal.map (mkFunctionCopy nonExternalNames)
-  let functions := originalFunctions ++ asFunctions
+  -- External procedures get a plain function copy (they have no $asFunction version)
+  let externalFunctions := program.staticProcedures.filter (fun p => p.body.isExternal)
+    |>.map fun proc => { proc with isFunctional := true }
+  let functions := externalFunctions ++ asFunctions
   let coreProcedures := nonExternal.map fun p =>
     let funcCopy := mkFunctionCopy nonExternalNames p
     let freePostcondition :=

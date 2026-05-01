@@ -197,6 +197,7 @@ private def runLaurelPasses (options : LaurelTranslateOptions) (program : Progra
   let preContractResolutionErrorCount := (resolve program (some model)).errors.size
 
   program := contractPass program
+  emit "contractPass" "core.st" program
 
   -- Check if contractPass introduced new resolution errors.
   let finalResolutionErrors := (resolve program (some model)).errors
