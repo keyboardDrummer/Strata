@@ -414,9 +414,10 @@ def buildSpecBody (allArgs : Array Arg)
     (returnType : SpecType)
     (source : Option FileRange)
     (ctx : SpecExprContext)
-    : ToLaurelM Body := do
+    : ToLaurelM (List Condition × Body) := do
   let fileSource ← mkFileSource
   let mut stmts : Array StmtExprMd := #[]
+  let mut preconds : Array Condition := #[]
   -- 1. Havoc the result: result := Hole(nondet)
   let holeExpr : StmtExprMd := { val := .Hole (deterministic := false), source := source }
   let resultId : AstNode Variable := { val := Variable.Local (mkId "result"), source := source }
@@ -452,6 +453,8 @@ def buildSpecBody (allArgs : Array Arg)
     if success then
       if let .TBool := condType then
         preconds := preconds.push { condition := condExpr.stmt, summary := some msg }
+        let assertStmt ← mkStmtWithLoc (.Assert { condition := condExpr.stmt, summary := some msg }) default
+        stmts := stmts.push assertStmt
       else
         reportError .typeError default
           s!"Precondition expression is not Bool in '{ctx.procName}' (skipping): {msg}"
@@ -478,7 +481,7 @@ def buildSpecBody (allArgs : Array Arg)
       val := .Block stmts.toList none,
       source := fileSource
   }
-  return .Opaque [] (some body) [{ val := .All, source := none }]
+  return (preconds.toList, .Opaque [] (some body) [{ val := .All, source := none }])
 
 /-! ## Declaration Translation -/
 
@@ -518,10 +521,9 @@ def funcDeclToLaurel (procName : String) (func : FunctionDecl)
     inputs.foldl (init := ({} : Std.HashMap String HighType).insert "result" Laurel.tyAny) fun m p =>
       m.insert p.name.text p.type.val
   let specCtx : SpecExprContext := { procName, argTypes }
-  let body ← buildSpecBody allArgs func.preconditions func.postconditions
+  let (preconds, body) ← buildSpecBody allArgs func.preconditions func.postconditions
     func.returnType none specCtx
   let src ← mkSourceWithFileRange func.loc
-  let preconds : List Condition := []
   return {
     name := { text := procName, source := src }
     inputs := inputs.toList

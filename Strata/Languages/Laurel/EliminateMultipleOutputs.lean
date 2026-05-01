@@ -80,7 +80,7 @@ private def isAssume (stmt : StmtExprMd) : Bool :=
     Returns the rewritten statements and the number of consumed following statements. -/
 private def rewriteAssign (infoMap : Std.HashMap String MultiOutInfo)
     (targets : List VariableMd) (callee : Identifier) (args : List StmtExprMd)
-    (callSrc : Option FileRange) (callMd : MetaData)
+    (callSrc : Option FileRange)
     (following : List StmtExprMd) (counter : Nat) : Option (List StmtExprMd × Nat) :=
   match infoMap.get? callee.text with
   | some info =>
@@ -88,7 +88,7 @@ private def rewriteAssign (infoMap : Std.HashMap String MultiOutInfo)
       let tempName := s!"${callee.text}$temp{counter}"
       let fullArgs := args
       let tempDecl := mkMd (.Assign [mkVarMd (.Declare ⟨mkId tempName, mkTy (.UserDefined (mkId info.resultTypeName))⟩)]
-          ⟨.StaticCall callee fullArgs, callSrc, callMd⟩)
+          ⟨.StaticCall callee fullArgs, callSrc⟩)
       let assigns := targets.zipIdx.map fun (tgt, i) =>
         mkMd (.Assign [tgt]
           (mkMd (.StaticCall (mkId (destructorName info i))
@@ -113,8 +113,8 @@ private def rewriteStmts (infoMap : Std.HashMap String MultiOutInfo)
     | [] => acc.reverse
     | stmt :: rest =>
       match stmt.val with
-      | .Assign targets ⟨.StaticCall callee args, callSrc, callMd⟩ =>
-        match rewriteAssign infoMap targets callee args callSrc callMd rest counter with
+      | .Assign targets ⟨.StaticCall callee args, callSrc⟩ =>
+        match rewriteAssign infoMap targets callee args callSrc rest counter with
         | some (expanded, consumed) => go (rest.drop consumed) (expanded.reverse ++ acc) (counter + 1)
         | none => go rest (stmt :: acc) counter
       | _ => go rest (stmt :: acc) counter

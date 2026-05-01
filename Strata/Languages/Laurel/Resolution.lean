@@ -171,8 +171,8 @@ def SemanticModel.get (model: SemanticModel) (iden: Identifier): ResolvedNode :=
       -- An ID was assigned during Phase 1 but the reference was never registered in
       -- Phase 2 (buildRefToDef). This is a bug in the resolution pass itself.
       dbg_trace s!"SOUND BUG: identifier '{iden.text}' (id={key}) has a uniqueId but is missing from refToDef"
-      .unresolved
-  | none => .unresolved
+      .unresolved iden.source
+  | none => .unresolved iden.source
 
 def SemanticModel.isFunction (model: SemanticModel) (id: Identifier): Bool :=
   match model.get id with

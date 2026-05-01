@@ -51,7 +51,7 @@ private def substIdentifier (name : Identifier) (replacement : StmtExprMd) (expr
 private def inlineLocalsInStmts (stmts : List StmtExprMd) : List StmtExprMd :=
   match stmts with
   | [] => []
-  | ⟨.Assign [⟨.Declare parameter, _, _⟩] initializer, _, _⟩ :: rest =>
+  | ⟨.Assign [⟨.Declare parameter, _⟩] initializer, _⟩ :: rest =>
     let rest' := rest.map (substIdentifier parameter.name initializer)
     inlineLocalsInStmts rest'
   | s :: rest => s :: inlineLocalsInStmts rest

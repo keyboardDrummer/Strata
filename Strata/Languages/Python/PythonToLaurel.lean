@@ -206,9 +206,6 @@ def stmtExprToVar (e : StmtExprMd) : VariableMd :=
   | .Var v => { val := v, source := e.source }
   | _ => { val := .Local "BUG_invalid_var", source := e.source }
 
-/-- A wildcard modifies list, meaning the procedure may modify anything. -/
-def wildcardModifies : List StmtExprMd := [mkStmtExprMd .All]
-
 /-- Create a StmtExprMd with source location metadata. -/
 def mkStmtExprMdWithLoc (expr : StmtExpr) (source : Option FileRange) : StmtExprMd :=
   { val := expr, source := source }

@@ -88,7 +88,7 @@ procedure argInvalid() returns (r: int)
   opaque
 {
   var x: int := takesNat(-1);
-//^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition does not hold
+//^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion does not hold
   return x
 };
 
