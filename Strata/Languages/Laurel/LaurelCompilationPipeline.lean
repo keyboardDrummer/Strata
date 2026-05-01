@@ -274,6 +274,8 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
 
     let coreProgramOption :=
       if translateState.coreProgramHasSuperfluousErrors then none else coreProgramOption
+    if coreProgramOption.isSome then
+      emit "Core" "core.st" coreProgramOption.get!
     return (coreProgramOption, allDiagnostics, program, stats)
 
 /--

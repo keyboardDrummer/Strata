@@ -24,12 +24,14 @@ For each procedure with contracts:
 
 For each call to a contracted procedure:
 - Insert `assert foo$pre(args)` before the call (precondition check).
-- Insert `assume foo$post(args)` after the call (postcondition assumption).
+- Insert `assume foo$post(args)` before the call (postcondition assumption).
 
-The postcondition procedure calls the original procedure internally so that
-the `assume` at call sites only references pre-call arguments. This avoids
-a soundness issue where mutable variables (e.g. `$heap`) are overwritten by
-the call's result destructuring before the `assume` is evaluated.
+The postcondition procedure takes only the input arguments and internally
+calls the original procedure to obtain outputs. The `assume` is placed
+before the call so that it only references pre-call variable values. This
+avoids a soundness issue where mutable variables (e.g. `$heap`) are
+overwritten by the call's result destructuring before the `assume` is
+evaluated.
 -/
 
 namespace Strata.Laurel
@@ -81,33 +83,47 @@ private def mkConditionProc (name : String) (params : List Parameter)
     isFunctional := true
     body := .Transparent (conjoin (conditions.map (·.condition))) }
 
-/-- Build a postcondition function that takes both input and output parameters
-    and returns the conjunction of postconditions.
+/-- Build a postcondition function that takes only the *input* parameters,
+    internally calls the original procedure to obtain the outputs, and returns
+    the conjunction of postconditions.
 
     For a procedure `foo(a, b) returns (x, y)` with postcondition `P(a, b, x, y)`,
     generates:
     ```
-    function foo$post(a, b, x, y) returns ($result : bool) {
+    function foo$post(a, b) returns ($result : bool) {
+      var x, y := foo(a, b);
       P(a, b, x, y)
     }
     ```
 
-    At call sites, the assume is placed *after* the assignment so that the
-    output variables are bound:
+    At call sites, the assume is placed *before* the call so that it only
+    references pre-call arguments. This avoids a soundness issue where mutable
+    variables (e.g. `$heap`) are overwritten by the call's result destructuring
+    before the `assume` is evaluated:
     ```
-    var x, y := foo(a_saved, b_saved);
-    assume foo$post(a_saved, b_saved, x, y);
+    assume foo$post(a, b);
+    var x, y := foo(a, b);
     ``` -/
-private def mkPostConditionProc (name : String) (_originalProcName : String)
+private def mkPostConditionProc (name : String) (originalProcName : String)
     (inputParams : List Parameter) (outputParams : List Parameter)
     (conditions : List Condition) : Procedure :=
+  -- Build a body that calls the original procedure to obtain outputs, then
+  -- returns the conjunction of postconditions. The procedure is non-functional
+  -- because it contains a call to the (opaque) original procedure.
+  let callArgs := paramsToArgs inputParams
+  let callExpr := mkCall originalProcName callArgs
+  let outputVars : List (AstNode Variable) := outputParams.map fun p =>
+    ⟨.Declare p, none⟩
+  let assignStmt := mkMd (.Assign outputVars callExpr)
+  let postcondBody := conjoin (conditions.map (·.condition))
+  let body := mkMd (.Block [assignStmt, postcondBody] none)
   { name := mkId name
-    inputs := inputParams ++ outputParams
+    inputs := inputParams
     outputs := [⟨mkId "$result", { val := .TBool, source := none }⟩]
     preconditions := []
     decreases := none
-    isFunctional := true
-    body := .Transparent (conjoin (conditions.map (·.condition))) }
+    isFunctional := false
+    body := .Transparent body }
 
 /-- Extract a combined summary from a list of conditions. -/
 private def combinedSummary (clauses : List Condition) : Option String :=
@@ -188,36 +204,29 @@ private def transformProcBody (proc : Procedure) (info : ContractInfo) : Body :=
     .Opaque [] (some ⟨ .Block [] none, none⟩)  []
   | b => b
 
-/-- Convert assignment targets to variable reference expressions. -/
-private def targetsToArgs (targets : List (AstNode Variable)) : List StmtExprMd :=
-  targets.map fun t =>
-    let name := match t.val with
-      | .Local n => n
-      | .Declare p => p.name
-      | .Field _ n => n  -- best effort
-    mkMd (.Var (.Local name))
-
 /-- Rewrite a single statement that may be a call to a contracted procedure.
     Returns a list of statements (the original plus any inserted assert/assume).
     Uses the call site's metadata for generated assert/assume nodes.
-    The postcondition assume is placed after the assignment and passes both
-    the call arguments and the assigned target variables. -/
+    The postcondition assume is placed *before* the call and only passes the
+    input arguments. The $post procedure internally calls the original procedure
+    to obtain outputs, avoiding the soundness issue where mutable variables are
+    overwritten before the assume is evaluated. -/
 private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
     (e : StmtExprMd) : List StmtExprMd :=
   let src := e.source
   let mkWithSrc (se : StmtExpr) : StmtExprMd := ⟨se, src⟩
   match e.val with
-  | .Assign targets (.mk (.StaticCall callee args) ..) =>
+  | .Assign _targets (.mk (.StaticCall callee args) ..) =>
     match contractInfoMap.get? callee.text with
     | some info =>
       let fullArgs := info.implicitArgs ++ args
       let preAssert := if info.hasPreCondition
         then [mkWithSrc (.Assert { condition := mkCall info.preName fullArgs, summary := info.preSummary })] else []
-      -- Assume $post *after* the assignment, passing both the call arguments
-      -- and the assigned target variables so the postcondition can reference outputs.
+      -- Assume $post *before* the call, passing only input arguments.
+      -- The $post procedure internally calls the original to obtain outputs.
       let postAssume := if info.hasPostCondition
-        then [mkWithSrc (.Assume (mkCall info.postName (fullArgs ++ targetsToArgs targets)))] else []
-      preAssert ++ [e] ++ postAssume
+        then [mkWithSrc (.Assume (mkCall info.postName fullArgs))] else []
+      preAssert ++ postAssume ++ [e]
     | none => [e]
   | .StaticCall callee args =>
     match contractInfoMap.get? callee.text with
@@ -225,7 +234,9 @@ private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
       let fullArgs := info.implicitArgs ++ args
       let preAssert := if info.hasPreCondition
         then [mkWithSrc (.Assert { condition := mkCall info.preName fullArgs, summary := info.preSummary })] else []
-      preAssert ++ [e]
+      let postAssume := if info.hasPostCondition
+        then [mkWithSrc (.Assume (mkCall info.postName fullArgs))] else []
+      preAssert ++ postAssume ++ [e]
     | none => [e]
   | _ => [e]
 
