@@ -219,9 +219,8 @@ When `keepAllFilesPrefix` is provided, the program state after each named
 Laurel-to-Laurel pass is written to `{prefix}.{n}.{passName}.laurel.st`.
 -/
 def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
-    (keepAllFilesPrefix : Option String := none)
     : IO TranslateResultWithLaurel :=
-  runPipelineM keepAllFilesPrefix do
+  runPipelineM options.keepAllFilesPrefix do
   let (program, model, passDiags, stats) ← runLaurelPasses options program
   let unorderedCore := transparencyPass program
   let unorderedCore := eliminateMultipleOutputs unorderedCore
@@ -288,14 +287,13 @@ def translate (options : LaurelTranslateOptions) (program : Program) : IO Transl
 Verify a Laurel program using an SMT solver.
 -/
 def verifyToVcResults (program : Program)
-    (options : VerifyOptions := .default)
-    (laurelOptions : LaurelTranslateOptions)
+    (options : LaurelVerifyOptions := default)
     : IO (Option VCResults × List DiagnosticModel) := do
-  let (coreProgramOption, translateDiags) ← translate laurelOptions program
+  let (coreProgramOption, translateDiags) ← translate options.translateOptions program
 
   match coreProgramOption with
   | some coreProgram =>
-    let options := { options with removeIrrelevantAxioms := .Precise }
+    let options := { options.verifyOptions with removeIrrelevantAxioms := .Precise }
     let runner tempDir :=
       EIO.toIO (fun f => IO.Error.userError (toString f))
           (Core.verify coreProgram tempDir .none options)
@@ -310,16 +308,14 @@ Verify a Laurel program using an SMT solver, returning results with
 duplicated assertions merged at the VCOutcome level.
 -/
 def verifyToMergedResults (program : Program)
-    (options : VerifyOptions := .default)
-    (laurelOptions : LaurelTranslateOptions)
+    (options : LaurelVerifyOptions := default)
     : IO (Option VCResults × List DiagnosticModel) := do
-  let (vcOpt, diags) ← verifyToVcResults program options laurelOptions
+  let (vcOpt, diags) ← verifyToVcResults program options
   return (vcOpt.map (·.mergeByAssertion), diags)
 
 def verifyToDiagnostics (files : Map Strata.Uri Lean.FileMap) (program : Program)
-    (options : VerifyOptions := .default)
-    (laurelOptions : LaurelTranslateOptions := {}) : IO (Array Diagnostic) := do
-  let results ← verifyToMergedResults program options laurelOptions
+    (options : LaurelVerifyOptions := default) : IO (Array Diagnostic) := do
+  let results ← verifyToMergedResults program options
   let phases := Core.coreAbstractedPhases
   let translationDiags := results.snd.map (fun dm => dm.toDiagnostic files)
   let vcDiags := match results.fst with
@@ -329,7 +325,7 @@ def verifyToDiagnostics (files : Map Strata.Uri Lean.FileMap) (program : Program
 
 def verifyToDiagnosticModels (program : Program) (options : LaurelVerifyOptions := default)
     : IO (Array DiagnosticModel) := do
-  let results ← verifyToMergedResults program options.verifyOptions options.translateOptions
+  let results ← verifyToMergedResults program options
   let phases := Core.coreAbstractedPhases
   let vcDiags := match results.fst with
   | none => []

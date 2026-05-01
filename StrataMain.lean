@@ -948,7 +948,7 @@ def laurelAnalyzeCommand : Command where
   callback := fun v pflags => do
     let options ← parseLaurelVerifyOptions pflags
     let laurelProgram ← Strata.readLaurelTextFile v[0]
-    let (vcResultsOption, errors) ← Strata.Laurel.verifyToVcResults laurelProgram options.verifyOptions options.translateOptions
+    let (vcResultsOption, errors) ← Strata.Laurel.verifyToVcResults laurelProgram options
     if !errors.isEmpty then
       IO.println s!"==== ERRORS ===="
     for err in errors do
