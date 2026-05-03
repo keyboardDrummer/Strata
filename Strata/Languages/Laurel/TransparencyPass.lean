@@ -30,12 +30,12 @@ public section
 /--
 An intermediate representation produced by the transparency pass.
 Functions are pure computational procedures (suffixed `$asFunction`);
-coreProcedures are the original procedures, each paired with a free
-postcondition expression (equating the procedure to its functional version).
+coreProcedures are the original procedures with any free postconditions
+embedded in their `Body.Opaque` postcondition lists.
 -/
 public structure UnorderedCoreWithLaurelTypes where
   functions : List Procedure
-  coreProcedures : List (Procedure × StmtExprMd)
+  coreProcedures : List Procedure
   datatypes : List DatatypeDefinition
   constants : List Constant
 
@@ -97,6 +97,24 @@ private def functionHasBody (proc : Procedure) : Bool :=
   | .Transparent _ => true
   | _ => false
 
+/-- Append a free postcondition to a procedure's body postconditions.
+    For Opaque and Abstract bodies, the free condition is appended to the
+    existing postcondition list. For Transparent bodies, the body is promoted
+    to Opaque so the free postcondition can be carried. -/
+private def addFreePostcondition (proc : Procedure) (freePost : StmtExprMd) : Procedure :=
+  match freePost.val with
+  | .LiteralBool true => proc  -- trivial, skip
+  | _ =>
+    let freeCond : Condition := { condition := freePost, free := true }
+    match proc.body with
+    | .Opaque postconds impl modif =>
+      { proc with body := .Opaque (postconds ++ [freeCond]) impl modif }
+    | .Abstract postconds =>
+      { proc with body := .Abstract (postconds ++ [freeCond]) }
+    | .Transparent body =>
+      { proc with body := .Opaque [freeCond] (some body) [] }
+    | _ => proc
+
 /--
 Transparency pass: translate a Laurel program to the UnorderedCoreWithLaurelTypes IR.
 
@@ -115,12 +133,9 @@ def transparencyPass (program : Program) : UnorderedCoreWithLaurelTypes :=
     |>.map fun proc => { proc with isFunctional := true }
   let functions := externalFunctions ++ asFunctions
   let coreProcedures := nonExternal.map fun p =>
-    let funcCopy := mkFunctionCopy nonExternalNames p
-    let freePostcondition :=
-      if functionHasBody funcCopy then mkFreePostcondition p
-      else mkMd (.LiteralBool true)
+    let freePostcondition := mkFreePostcondition p
     let proc := { p with isFunctional := false }
-    (proc, freePostcondition)
+    addFreePostcondition proc freePostcondition
   let datatypes := program.types.filterMap fun td => match td with
     | .Datatype dt => some dt
     | _ => none
@@ -132,8 +147,7 @@ def formatUnorderedCoreWithLaurelTypes (p : UnorderedCoreWithLaurelTypes) : Form
   let datatypeFmts := p.datatypes.map ToFormat.format
   let constantFmts := p.constants.map ToFormat.format
   let functionFmts := p.functions.map ToFormat.format
-  let procFmts := p.coreProcedures.map fun (proc, post) =>
-    f!"{ToFormat.format proc}\n  // free postcondition: {ToFormat.format post}"
+  let procFmts := p.coreProcedures.map ToFormat.format
   Format.joinSep (datatypeFmts ++ constantFmts ++ functionFmts ++ procFmts) "\n\n"
 
 instance : ToFormat UnorderedCoreWithLaurelTypes where

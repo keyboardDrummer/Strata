@@ -221,7 +221,7 @@ program are included so that references to composite types resolve correctly.
 -/
 private def toProgram (uc : UnorderedCoreWithLaurelTypes) (laurelProgram : Program)
     : Program :=
-  { staticProcedures := uc.functions ++ uc.coreProcedures.map Prod.fst,
+  { staticProcedures := uc.functions ++ uc.coreProcedures,
     staticFields := [],
     types := uc.datatypes.map TypeDefinition.Datatype ++
       -- Hack to compensate for references to composite types not having been updated yet.
@@ -230,19 +230,15 @@ private def toProgram (uc : UnorderedCoreWithLaurelTypes) (laurelProgram : Progr
 
 /--
 Reconstruct an `UnorderedCoreWithLaurelTypes` from a resolved `Program`,
-preserving the free postconditions from the original `UnorderedCoreWithLaurelTypes`.
+preserving the structure of the original `UnorderedCoreWithLaurelTypes`.
 -/
 private def fromResolvedProgram (resolvedProgram : Program)
-    (original : UnorderedCoreWithLaurelTypes) : UnorderedCoreWithLaurelTypes :=
+    (_original : UnorderedCoreWithLaurelTypes) : UnorderedCoreWithLaurelTypes :=
   let resolvedProcs := resolvedProgram.staticProcedures
   let resolvedDatatypes := resolvedProgram.types.filterMap fun td =>
     match td with | .Datatype dt => some dt | _ => none
-  let postMap : Std.HashMap String StmtExprMd :=
-    original.coreProcedures.foldl (fun m (p, post) => m.insert p.name.text post) {}
-  let defaultPost : StmtExprMd := { val := .LiteralBool true, source := none }
   { functions := resolvedProcs.filter (·.isFunctional)
-    coreProcedures := (resolvedProcs.filter (!·.isFunctional)).map fun p =>
-      (p, postMap.getD p.name.text defaultPost)
+    coreProcedures := resolvedProcs.filter (!·.isFunctional)
     datatypes := resolvedDatatypes
     constants := resolvedProgram.constants }
 
@@ -265,21 +261,17 @@ procedure list are transformed; functions are left unchanged.
 -/
 def liftImperativeExpressionsInCore (uc : UnorderedCoreWithLaurelTypes)
     (model : SemanticModel) : UnorderedCoreWithLaurelTypes :=
-  let imperativeCallees := uc.coreProcedures.map (·.fst.name.text)
+  let imperativeCallees := uc.coreProcedures.map (·.name.text)
   if imperativeCallees.isEmpty then uc
   else
-    let allProcs := uc.functions ++ uc.coreProcedures.map Prod.fst
+    let allProcs := uc.functions ++ uc.coreProcedures
     let liftedProgram := liftExpressionAssignments
       { staticProcedures := allProcs, staticFields := [], types := [], constants := [] }
       model imperativeCallees
     let liftedProcs := liftedProgram.staticProcedures
-    let postMap : Std.HashMap String StmtExprMd :=
-      uc.coreProcedures.foldl (fun m (p, post) => m.insert p.name.text post) {}
-    let defaultPost : StmtExprMd := { val := .LiteralBool true, source := none }
     { uc with
       functions := liftedProcs.filter (·.isFunctional)
-      coreProcedures := (liftedProcs.filter (!·.isFunctional)).map fun p =>
-        (p, postMap.getD p.name.text defaultPost) }
+      coreProcedures := liftedProcs.filter (!·.isFunctional) }
 
 /--
 Translate Laurel Program to Core Program, also returning the lowered Laurel program.

@@ -156,7 +156,7 @@ def eliminateMultipleOutputs (program : UnorderedCoreWithLaurelTypes)
     match infoMap.get? f.name.text with
     | some info => rewriteProcedure infoMap (transformFunction info f)
     | none => rewriteProcedure infoMap f
-  let coreProcedures := program.coreProcedures.map fun (p, post) => (rewriteProcedure infoMap p, post)
+  let coreProcedures := program.coreProcedures.map fun p => rewriteProcedure infoMap p
   { program with
     functions := functions
     coreProcedures := coreProcedures

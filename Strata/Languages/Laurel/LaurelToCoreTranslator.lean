@@ -564,7 +564,8 @@ private def translateChecks (checks : List Condition) (labelBase : String)
     let md := match check.summary with
       | some msg => baseMd.pushElem Imperative.MetaData.propertySummary (.msg msg)
       | none => baseMd
-    let c : Core.Procedure.Check := { expr := checkExpr, md }
+    let attr := if check.free then Core.Procedure.CheckAttr.Free else .Default
+    let c : Core.Procedure.Check := { expr := checkExpr, attr, md }
     return (label, c))
 
 /--
@@ -763,22 +764,9 @@ def translateLaurelToCore (options: LaurelTranslateOptions) (program : Program) 
         return [Core.Decl.recFuncBlock coreFuncValues mdWithUnknownLoc]
       else
         return coreFuncs
-    | .procedure proc freePost => do
+    | .procedure proc => do
       modify fun s => { s with proof := true }
       let procDecl ← translateProcedure proc
-      -- Translate the free postcondition from the transparency pass.
-      -- A non-trivial free postcondition (not `true`) becomes a `free ensures`
-      -- check on the Core procedure, equating the procedure's output to its
-      -- `$asFunction` version.
-      let procDecl ← match freePost.val with
-        | .LiteralBool true => pure procDecl
-        | _ => do
-          let freeExpr ← translateExpr freePost [] (isPureContext := true)
-          let freeCheck : Core.Procedure.Check :=
-            { expr := freeExpr, attr := .Free, md := mdWithUnknownLoc }
-          let newPostconds : ListMap Core.CoreLabel Core.Procedure.Check :=
-            List.append procDecl.spec.postconditions [("free_ensures", freeCheck)]
-          pure { procDecl with spec := { procDecl.spec with postconditions := newPostconds } }
       -- Translate axioms (populated by the contract pass from invokeOn + ensures)
       let axiomDecls ← proc.axioms.mapM fun ax => do
         let coreExpr ← translateExpr ax [] (isPureContext := true)
