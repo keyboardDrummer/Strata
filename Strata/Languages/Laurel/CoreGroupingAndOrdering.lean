@@ -174,8 +174,10 @@ public inductive OrderedDecl where
   /-- A group of functions (single non-recursive, or mutually recursive).
       Invariant: `funcs.length > 1 → isRecursive = true`. -/
   | funcs (funcs : List Procedure) (isRecursive : Bool)
-  /-- A single (non-functional) procedure. -/
-  | procedure (procedure : Procedure)
+  /-- A single (non-functional) procedure paired with its free postcondition
+      expression (from the transparency pass). The free postcondition equates
+      the procedure's output to its `$asFunction` version. -/
+  | procedure (procedure : Procedure) (freePostcondition : StmtExprMd)
   /-- A group of (possibly mutually recursive) datatypes. -/
   | datatypes (dts : List DatatypeDefinition)
   /-- A named constant. -/
@@ -195,7 +197,8 @@ public section
 
 def formatOrderedDecl : OrderedDecl → Format
   | .funcs funcs _ => Format.joinSep (funcs.map ToFormat.format) "\n\n"
-  | .procedure proc => ToFormat.format proc
+  | .procedure proc freePost =>
+    f!"{ToFormat.format proc}\n  // free postcondition: {ToFormat.format freePost}"
   | .datatypes dts => Format.joinSep (dts.map ToFormat.format) "\n\n"
   | .constant c => ToFormat.format c
 
@@ -224,11 +227,16 @@ public def orderFunctionsAndProofs (program : UnorderedCoreWithLaurelTypes) : Co
   let constantDecls := program.constants.map OrderedDecl.constant
   let funcNames : Std.HashSet String :=
     program.functions.foldl (fun s p => s.insert p.name.text) {}
+  -- Build a map from procedure name to its free postcondition expression.
+  let postMap : Std.HashMap String StmtExprMd :=
+    program.coreProcedures.foldl (fun m (p, post) => m.insert p.name.text post) {}
+  let defaultPost : StmtExprMd := { val := .LiteralBool true, source := none }
   let orderedDecls := (computeSccDecls program).flatMap fun (procs, isRecursive) =>
     -- Split the SCC into functions and proofs
     let (funcs, proofs) := procs.partition (fun p => funcNames.contains p.name.text)
     let funcDecl := if funcs.isEmpty then [] else [OrderedDecl.funcs funcs isRecursive]
-    let proofDecls := proofs.map OrderedDecl.procedure
+    let proofDecls := proofs.map fun p =>
+      OrderedDecl.procedure p (postMap.getD p.name.text defaultPost)
     funcDecl ++ proofDecls
   { decls := datatypeDecls ++ constantDecls ++ orderedDecls }
 where

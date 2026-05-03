@@ -763,9 +763,22 @@ def translateLaurelToCore (options: LaurelTranslateOptions) (program : Program) 
         return [Core.Decl.recFuncBlock coreFuncValues mdWithUnknownLoc]
       else
         return coreFuncs
-    | .procedure proc => do
+    | .procedure proc freePost => do
       modify fun s => { s with proof := true }
       let procDecl ← translateProcedure proc
+      -- Translate the free postcondition from the transparency pass.
+      -- A non-trivial free postcondition (not `true`) becomes a `free ensures`
+      -- check on the Core procedure, equating the procedure's output to its
+      -- `$asFunction` version.
+      let procDecl ← match freePost.val with
+        | .LiteralBool true => pure procDecl
+        | _ => do
+          let freeExpr ← translateExpr freePost [] (isPureContext := true)
+          let freeCheck : Core.Procedure.Check :=
+            { expr := freeExpr, attr := .Free, md := mdWithUnknownLoc }
+          let newPostconds : ListMap Core.CoreLabel Core.Procedure.Check :=
+            List.append procDecl.spec.postconditions [("free_ensures", freeCheck)]
+          pure { procDecl with spec := { procDecl.spec with postconditions := newPostconds } }
       -- Translate axioms (populated by the contract pass from invokeOn + ensures)
       let axiomDecls ← proc.axioms.mapM fun ax => do
         let coreExpr ← translateExpr ax [] (isPureContext := true)
