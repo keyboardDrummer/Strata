@@ -96,9 +96,7 @@ def collectExpr (expr : StmtExpr) : StateM AnalysisResult Unit := do
     -- For target inside Field in assign target list (attach-based loop):
     all_goals (
       have := List.sizeOf_lt_of_mem ‹_›
-      have := AstNode.sizeOf_val_lt assignTarget
-      have := Variable.sizeOf_field_target_lt target _fieldName
-      have : sizeOf assignTarget.val = sizeOf (Variable.Field target _fieldName) := by exact congrArg sizeOf _hav
+      have := Variable.sizeOf_field_target_lt_of_eq _hav
       omega)
 end
 
@@ -447,9 +445,7 @@ where
       -- For field inner expressions in attach-based:
       all_goals (try (
         have := List.sizeOf_lt_of_mem ‹_›
-        have := AstNode.sizeOf_val_lt t
-        have := Variable.sizeOf_field_target_lt target fieldName
-        have : sizeOf t.val = sizeOf (Variable.Field target fieldName) := by exact congrArg sizeOf _htv
+        have := Variable.sizeOf_field_target_lt_of_eq _htv
         omega))
       -- Remaining goals
       all_goals (

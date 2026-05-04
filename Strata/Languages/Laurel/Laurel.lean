@@ -350,6 +350,23 @@ theorem Variable.sizeOf_field_target_lt (target : AstNode StmtExpr) (fieldName :
     sizeOf target < sizeOf (Variable.Field target fieldName) := by
   simp; omega
 
+/-- Variant of `sizeOf_field_target_lt` that works directly with an `AstNode Variable`
+whose `.val` is known to be a `Field`. Eliminates the common three-line termination proof pattern:
+```
+have := Variable.sizeOf_field_target_lt target fieldName
+have : sizeOf v.val = sizeOf (Variable.Field target fieldName) := by exact congrArg sizeOf h
+omega
+```
+-/
+theorem Variable.sizeOf_field_target_lt_of_eq {v : AstNode Variable}
+    {target : AstNode StmtExpr} {fieldName : Identifier}
+    (h : v.val = Variable.Field target fieldName) :
+    sizeOf target < sizeOf v := by
+  have := AstNode.sizeOf_val_lt v
+  have := Variable.sizeOf_field_target_lt target fieldName
+  have : sizeOf v.val = sizeOf (Variable.Field target fieldName) := congrArg sizeOf h
+  omega
+
 /-- Apply a monadic transformation to the condition expression, preserving the summary. -/
 def Condition.mapM [Monad m] (f : AstNode StmtExpr → m (AstNode StmtExpr)) (c : Condition) : m Condition :=
   return { c with condition := ← f c.condition }

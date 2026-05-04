@@ -104,9 +104,7 @@ decreasing_by
   all_goals (try term_by_mem)
   all_goals (try (
     have := List.sizeOf_lt_of_mem ‹_›
-    have := AstNode.sizeOf_val_lt t
-    have := Variable.sizeOf_field_target_lt inner _fieldName
-    have : sizeOf t.val = sizeOf (Variable.Field inner _fieldName) := by exact congrArg sizeOf _htv
+    have := Variable.sizeOf_field_target_lt_of_eq _htv
     omega))
   all_goals omega
 
