@@ -384,8 +384,24 @@ def translateStmt (stmt : StmtExprMd)
       if hasField then
         throwStmtDiagnostic $ md.toDiagnostic "Field targets in assignment should have been lowered by heap parameterization" DiagnosticType.StrataBug
       else
-      -- Partition targets into init statements for Declare targets and CoreIdent list for all targets.
-      -- Declare targets get `init nondet`; Local targets just contribute their identifier.
+      -- Dispatch over targets, calling onDeclare/onLocal per target type.
+      let dispatchTargets
+          (onDeclare : Core.CoreIdent → LTy → TranslateM (List Core.Statement))
+          (onLocal : Core.CoreIdent → TranslateM (List Core.Statement))
+          : TranslateM (List Core.Statement) := do
+        let mut result : List Core.Statement := []
+        for target in targets do
+          match target.val with
+          | .Declare param =>
+            let coreType := LTy.forAll [] (← translateType param.type)
+            let ident : Core.CoreIdent := ⟨param.name.text, ()⟩
+            result := result ++ (← onDeclare ident coreType)
+          | .Local name =>
+            let ident : Core.CoreIdent := ⟨name.text, ()⟩
+            result := result ++ (← onLocal ident)
+          | .Field _ _ => pure () -- already handled above
+        return result
+      -- Partition targets into init-nondet statements and CoreIdent list (for procedure calls).
       let initTargetsNondet : TranslateM (List Core.Statement × List Core.CoreIdent) := do
         let mut inits : List Core.Statement := []
         let mut lhs : List Core.CoreIdent := []
@@ -413,18 +429,11 @@ def translateStmt (stmt : StmtExprMd)
         if model.isFunction callee then
           -- Function call: translate as a normal expression assignment
           let coreExpr ← translateExpr value
-          let mut result : List Core.Statement := []
           match targets with
-          | [target] =>
-            match target.val with
-              | .Declare param =>
-                let coreType := LTy.forAll [] (← translateType param.type)
-                let ident : Core.CoreIdent := ⟨param.name.text, ()⟩
-                result := result ++ [Core.Statement.init ident coreType (.det coreExpr) md]
-              | .Local name =>
-                let ident : Core.CoreIdent := ⟨name.text, ()⟩
-                result := result ++ [Core.Statement.set ident coreExpr md]
-              | .Field _ _ => pure () -- already handled above
+          | [_target] =>
+            let result ← dispatchTargets
+              (onDeclare := fun ident coreType => pure [Core.Statement.init ident coreType (.det coreExpr) md])
+              (onLocal := fun ident => pure [Core.Statement.set ident coreExpr md])
             return result
           | _ =>
             throwStmtDiagnostic $ md.toDiagnostic "function call without a single target" DiagnosticType.StrataBug
@@ -434,31 +443,16 @@ def translateStmt (stmt : StmtExprMd)
           translateCallTargets callee.text args
       | .Hole _ _ =>
           -- Hole RHS: havoc all targets (unmodeled call side-effect).
-          let mut result : List Core.Statement := []
-          for target in targets do
-            match target.val with
-            | .Declare param =>
-              let coreType := LTy.forAll [] (← translateType param.type)
-              let ident : Core.CoreIdent := ⟨param.name.text, ()⟩
-              result := result ++ [Core.Statement.init ident coreType .nondet md]
-            | .Local name =>
-              let ident : Core.CoreIdent := ⟨name.text, ()⟩
-              result := result ++ [Core.Statement.havoc ident md]
-            | .Field _ _ => pure () -- already handled above
-          return result
+          dispatchTargets
+            (onDeclare := fun ident coreType => pure [Core.Statement.init ident coreType .nondet md])
+            (onLocal := fun ident => pure [Core.Statement.havoc ident md])
       | _ =>
         match targets with
-        | [target] =>
+        | [_target] =>
           let coreExpr ← translateExpr value
-          match target.val with
-            | .Declare param =>
-              let coreType := LTy.forAll [] (← translateType param.type)
-              let ident : Core.CoreIdent := ⟨param.name.text, ()⟩
-              return [Core.Statement.init ident coreType (.det coreExpr) md]
-            | .Local name =>
-              let ident : Core.CoreIdent := ⟨name.text, ()⟩
-              return [Core.Statement.set ident coreExpr md]
-            | .Field _ _ => pure [] -- already handled above
+          dispatchTargets
+            (onDeclare := fun ident coreType => pure [Core.Statement.init ident coreType (.det coreExpr) md])
+            (onLocal := fun ident => pure [Core.Statement.set ident coreExpr md])
         | _ =>
           throwStmtDiagnostic $ md.toDiagnostic "Multi-target assignment need a call as a RHS" DiagnosticType.StrataBug
   | .IfThenElse cond thenBranch elseBranch =>

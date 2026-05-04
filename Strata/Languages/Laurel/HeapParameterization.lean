@@ -97,8 +97,8 @@ def collectExpr (expr : StmtExpr) : StateM AnalysisResult Unit := do
     all_goals (
       have := List.sizeOf_lt_of_mem ‹_›
       have := AstNode.sizeOf_val_lt assignTarget
+      have := Variable.sizeOf_field_target_lt target _fieldName
       have : sizeOf assignTarget.val = sizeOf (Variable.Field target _fieldName) := by exact congrArg sizeOf _hav
-      simp at *
       omega)
 end
 
@@ -335,6 +335,7 @@ where
           match _htv : t.val with
           | .Field target fieldName => do
               let some qualifiedName := resolveQualifiedFieldName model fieldName
+                -- Field name did not resolve; a diagnostic will have been emitted by the resolution pass.
                 | return (accTargets ++ [t], accStmts)
               let valTy := (model.get fieldName).getType
               recordBoxConstructor model valTy.val
@@ -379,10 +380,12 @@ where
 
         -- Make sure the result of the StmtExpr is still the same
         let suffixes: List (AstNode StmtExpr) := if valueUsed && targets.length == 1
-          then updateStatements ++ [⟨ StmtExpr.Var $ variableAsRef $
-            -- ! is valid because
-            -- have : allTargets.length >= targets.length + if addedHeap then 1 else 0 := by sorry;
-            if addedHeap then allTargets[1]!.val else allTargets[0]!.val, source⟩]
+          then
+            let targetVar := match processedTargets with
+              | t :: _ => variableAsRef t.val
+              -- unreachable: targets.length == 1 guarantees processedTargets is non-empty
+              | [] => Variable.Local "$bug_empty_targets"
+            updateStatements ++ [⟨ StmtExpr.Var targetVar, source⟩]
           else updateStatements
         pure (newAssign, suffixes)
 
@@ -445,8 +448,8 @@ where
       all_goals (try (
         have := List.sizeOf_lt_of_mem ‹_›
         have := AstNode.sizeOf_val_lt t
+        have := Variable.sizeOf_field_target_lt target fieldName
         have : sizeOf t.val = sizeOf (Variable.Field target fieldName) := by exact congrArg sizeOf _htv
-        simp_all
         omega))
       -- Remaining goals
       all_goals (

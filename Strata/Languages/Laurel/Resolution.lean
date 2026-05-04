@@ -403,7 +403,9 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
         let name' ← defineNameCheckDup param.name (.var param.name ty')
         pure (⟨.Declare ⟨name', ty'⟩, vs⟩ : VariableMd)
     let value' ← resolveStmtExpr value
-    -- Check that LHS target count matches the number of outputs from the RHS
+    -- Check that LHS target count matches the number of outputs from the RHS.
+    -- This fires for procedure calls (which can have multiple outputs).
+    -- Functions always have exactly 1 output in the model, so single-target function calls pass trivially.
     let expectedOutputCount ← match value'.val with
       | .StaticCall callee _ => do
         let s ← get

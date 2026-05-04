@@ -162,8 +162,8 @@ inductive HighType : Type where
   Any type can be assigned to unknown and unknown can be assigned to any type.
   The unknown type can not be represented in Core so its occurence will abort compilation before evaluating Core -/
   | Unknown
-  /-- A multi-valued expression type, returned by procedure calls with multiple outputs.
-  Used by the resolution pass to validate that the LHS of an assignment has the correct number of targets. -/
+  /-- An internal-only type produced by `computeExprType` for multi-output procedure calls.
+  Consumed by the resolution arity check and `highEq`. Should never appear in a serialized program. -/
   | MultiValuedExpr (types : List (AstNode HighType))
   deriving Repr
 
@@ -343,6 +343,12 @@ theorem AstNode.sizeOf_val_lt {t : Type} [SizeOf t] (e : AstNode t) : sizeOf e.v
 
 theorem Condition.sizeOf_condition_lt (c : Condition) : sizeOf c.condition < 1 + sizeOf c := by
   cases c; grind
+
+/-- The target expression inside a `Variable.Field` is strictly smaller than the `Field` itself.
+Useful for termination proofs when recursing into `Variable.Field` targets. -/
+theorem Variable.sizeOf_field_target_lt (target : AstNode StmtExpr) (fieldName : Identifier) :
+    sizeOf target < sizeOf (Variable.Field target fieldName) := by
+  simp; omega
 
 /-- Apply a monadic transformation to the condition expression, preserving the summary. -/
 def Condition.mapM [Monad m] (f : AstNode StmtExpr → m (AstNode StmtExpr)) (c : Condition) : m Condition :=
