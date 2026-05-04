@@ -230,8 +230,6 @@ private def freshId : ResolveM Nat := do
   set { s with nextId := id + 1 }
   return id
 
-
-
 /-- Like `defineName`, but reports a diagnostic if the name already exists in the current scope.
     Inserts an `.unresolved` node so subsequent references still resolve without cascading errors. -/
 def defineNameCheckDup (iden : Identifier) (node : ResolvedNode) (overrideResolutionName: Option String := none) : ResolveM Identifier := do
