@@ -410,27 +410,20 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
       | .StaticCall callee _ => do
         let s ← get
         match s.scope.get? callee.text with
-        | some (_, .staticProcedure proc) => pure (some proc.outputs.length)
-        | some (_, .instanceProcedure _ proc) => pure (some proc.outputs.length)
-        | _ => pure none
+        | some (_, .staticProcedure proc) => pure proc.outputs.length
+        | some (_, .instanceProcedure _ proc) => pure proc.outputs.length
+        | _ => pure 1
       | .InstanceCall _ callee _ => do
         let s ← get
         match s.scope.get? callee.text with
-        | some (_, .instanceProcedure _ proc) => pure (some proc.outputs.length)
-        | some (_, .staticProcedure proc) => pure (some proc.outputs.length)
-        | _ => pure none
-      | _ => pure none
-    match expectedOutputCount with
-    | some expected =>
-      if targets'.length != expected then
-        let calleeName := match value'.val with
-          | .StaticCall callee _ => callee.text
-          | .InstanceCall _ callee _ => callee.text
-          | _ => "unknown"
-        let diag := diagnosticFromSource source
-          s!"Assignment target count mismatch: {targets'.length} targets but '{calleeName}' returns {expected} values"
-        modify fun s => { s with errors := s.errors.push diag }
-    | none => pure ()
+        | some (_, .instanceProcedure _ proc) => pure proc.outputs.length
+        | some (_, .staticProcedure proc) => pure proc.outputs.length
+        | _ => pure 1
+      | _ => pure 1
+    if targets'.length != expectedOutputCount then
+      let diag := diagnosticFromSource source
+        s!"Assignment target count mismatch: {targets'.length} targets but right-hand side produces {expectedOutputCount} values"
+      modify fun s => { s with errors := s.errors.push diag }
     pure (.Assign targets' value')
   | .Var (.Field target fieldName) =>
     let target' ← resolveStmtExpr target
