@@ -13,11 +13,17 @@ namespace Strata
 namespace Laurel
 
 def transparentBodyProgram := r"
-procedure transparentBody()
-//        ^^^^^^^^^^^^^^^ error: transparent statement bodies are not supported
+procedure transparentBody(): int
 {
-  assert true
+  assert true;
+  3
 };
+
+// No support for transparent void procedures yet
+// procedure transparentBody()
+// {
+//   assert true
+// };
 "
 
 #guard_msgs(drop info, error) in
