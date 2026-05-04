@@ -47,7 +47,9 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ var x: int := 1 + $hole_0() };
+{
+  var x: int := 1 + $hole_0()
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -63,7 +65,9 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ var x: int := $hole_0() };
+{
+  var x: int := $hole_0()
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -79,7 +83,9 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ assert $hole_0() > 0 };
+{
+  assert $hole_0() > 0
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -95,7 +101,9 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ assert $hole_0() };
+{
+  assert $hole_0()
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -111,7 +119,9 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ assume $hole_0() };
+{
+  assume $hole_0()
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -127,7 +137,11 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ if $hole_0() then { assert true } };
+{
+  if $hole_0() then {
+    assert true
+  }
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -143,7 +157,9 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ var x: int := if true then $hole_0() else 0 };
+{
+  var x: int := if true then $hole_0() else 0
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -159,7 +175,11 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ while($hole_0()) {  } };
+{
+  while($hole_0()) {
+
+  }
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -175,8 +195,12 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ while(true)
-  invariant $hole_0() {  } };
+{
+  while(true)
+    invariant $hole_0() {
+
+  }
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -194,7 +218,9 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ assert true && $hole_0() };
+{
+  assert true && $hole_0()
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -210,7 +236,9 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ var x: int := -$hole_0() };
+{
+  var x: int := -$hole_0()
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -225,7 +253,9 @@ info: function $hole_0()
   returns ($result: string)
   opaque;
 procedure test()
-{ var s: string := "hello" ++ $hole_0() };
+{
+  var s: string := "hello" ++ $hole_0()
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint
@@ -243,7 +273,9 @@ function $hole_1()
   opaque;
 procedure test()
   opaque
-{ var x: int := $hole_0() + $hole_1() };
+{
+  var x: int := $hole_0() + $hole_1()
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -262,7 +294,10 @@ function $hole_1()
   opaque;
 procedure test()
   opaque
-{ var x: int := 2 * $hole_0(); assert $hole_1() };
+{
+  var x: int := 2 * $hole_0();
+  assert $hole_1()
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -280,7 +315,11 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ if 1 + $hole_0() > 0 then { assert true } };
+{
+  if 1 + $hole_0() > 0 then {
+    assert true
+  }
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -296,8 +335,13 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ var p: bool; while(true)
-  invariant p ==> $hole_0() {  } };
+{
+  var p: bool;
+  while(true)
+    invariant p ==> $hole_0() {
+
+  }
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -313,7 +357,9 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ var r: real := 3.14 * $hole_0() };
+{
+  var r: real := 3.14 * $hole_0()
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -331,7 +377,9 @@ info: function $hole_0(n: int)
   opaque;
 procedure test(n: int)
   opaque
-{ assert n > $hole_0(n) };
+{
+  assert n > $hole_0(n)
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -349,7 +397,9 @@ info: function $hole_0(x: int)
   opaque;
 function test(x: int): int
   opaque
-{ $hole_0(x) };
+{
+  $hole_0(x)
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -364,7 +414,9 @@ function test(x: int): int
 /--
 info: procedure test()
   opaque
-{ assert <??> };
+{
+  assert <??>
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
@@ -380,7 +432,10 @@ info: function $hole_0()
   opaque;
 procedure test()
   opaque
-{ var x: int := $hole_0(); assert <??> };
+{
+  var x: int := $hole_0();
+  assert <??>
+};
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"

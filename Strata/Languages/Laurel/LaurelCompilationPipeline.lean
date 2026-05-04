@@ -293,6 +293,7 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
 
   -- Lift imperative expressions in the proof procedures.
   let unorderedCore := liftImperativeExpressionsInCore unorderedCore fnModel
+  emit "secondLiftingPass" "core.st" unorderedCore
 
   -- Re-resolve after lifting so that freshly introduced variables (e.g. $cndtn_N)
   -- created by liftExpressionAssignments also get uniqueIds in the model.
