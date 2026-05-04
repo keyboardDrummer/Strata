@@ -40,4 +40,5 @@ procedure invalidPostcondition(x: int)
 "
 
 #guard_msgs (drop info, error) in
-#eval testInputWithOffset "Postconditions" program 14 processLaurelFile
+#eval testInputWithOffset "Postconditions" program 14
+  (processLaurelFileWithOptions { translateOptions := { keepAllFilesPrefix := "/home/ubuntu/repos/Strata/Build/"}})
