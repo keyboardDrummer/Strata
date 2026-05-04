@@ -174,10 +174,38 @@ def containsAssignmentOrImperativeCall (imperativeCallees : List String) (expr :
       containsAssignmentOrImperativeCall imperativeCallees cond ||
       containsAssignmentOrImperativeCall imperativeCallees th ||
       match el with | some e => containsAssignmentOrImperativeCall imperativeCallees e | none => false
+  | .Assume cond => containsAssignmentOrImperativeCall imperativeCallees cond
+  | .Assert cond => containsAssignmentOrImperativeCall imperativeCallees cond.condition
+  | .InstanceCall target _ args =>
+      containsAssignmentOrImperativeCall imperativeCallees target ||
+      args.attach.any (fun x => containsAssignmentOrImperativeCall imperativeCallees x.val)
+  | .Quantifier _ _ trigger body =>
+      containsAssignmentOrImperativeCall imperativeCallees body ||
+      match trigger with | some t => containsAssignmentOrImperativeCall imperativeCallees t | none => false
+  | .Old value => containsAssignmentOrImperativeCall imperativeCallees value
+  | .Fresh value => containsAssignmentOrImperativeCall imperativeCallees value
+  | .ProveBy value proof =>
+      containsAssignmentOrImperativeCall imperativeCallees value ||
+      containsAssignmentOrImperativeCall imperativeCallees proof
+  | .ReferenceEquals lhs rhs =>
+      containsAssignmentOrImperativeCall imperativeCallees lhs ||
+      containsAssignmentOrImperativeCall imperativeCallees rhs
+  | .PureFieldUpdate target _ newValue =>
+      containsAssignmentOrImperativeCall imperativeCallees target ||
+      containsAssignmentOrImperativeCall imperativeCallees newValue
+  | .AsType target _ => containsAssignmentOrImperativeCall imperativeCallees target
+  | .IsType target _ => containsAssignmentOrImperativeCall imperativeCallees target
+  | .Assigned name => containsAssignmentOrImperativeCall imperativeCallees name
+  | .ContractOf _ func => containsAssignmentOrImperativeCall imperativeCallees func
+  | .Return (some v) => containsAssignmentOrImperativeCall imperativeCallees v
   | _ => false
   termination_by expr
   decreasing_by
-    all_goals ((try cases x); simp_all; try term_by_mem)
+    all_goals (try cases x)
+    all_goals (try simp_all)
+    all_goals (try have := Condition.sizeOf_condition_lt ‹_›)
+    all_goals (try term_by_mem)
+    all_goals omega
 
 /-- Check if an expression contains any nondeterministic holes (recursively). -/
 private def containsNondetHole (expr : StmtExprMd) : Bool :=
@@ -345,10 +373,83 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       else
         return expr
 
+  | .Assume cond =>
+      let seqCond ← transformExpr cond
+      return ⟨.Assume seqCond, source⟩
+
+  | .Assert cond =>
+      let seqCondExpr ← transformExpr cond.condition
+      return ⟨.Assert { cond with condition := seqCondExpr }, source⟩
+
+  | .Return (some retExpr) =>
+      let seqRet ← transformExpr retExpr
+      return ⟨.Return (some seqRet), source⟩
+
+  | .While cond invs dec body =>
+      let seqCond ← transformExpr cond
+      let seqInvs ← invs.mapM transformExpr
+      let seqDec ← match dec with
+        | some d => pure (some (← transformExpr d))
+        | none => pure none
+      let seqBody ← transformExpr body
+      return ⟨.While seqCond seqInvs seqDec seqBody, source⟩
+
+  | .PureFieldUpdate target fieldName newValue =>
+      let seqTarget ← transformExpr target
+      let seqNewValue ← transformExpr newValue
+      return ⟨.PureFieldUpdate seqTarget fieldName seqNewValue, source⟩
+
+  | .ReferenceEquals lhs rhs =>
+      let seqRhs ← transformExpr rhs
+      let seqLhs ← transformExpr lhs
+      return ⟨.ReferenceEquals seqLhs seqRhs, source⟩
+
+  | .AsType target ty =>
+      let seqTarget ← transformExpr target
+      return ⟨.AsType seqTarget ty, source⟩
+
+  | .IsType target ty =>
+      let seqTarget ← transformExpr target
+      return ⟨.IsType seqTarget ty, source⟩
+
+  | .InstanceCall target callee args =>
+      let seqArgs ← args.reverse.mapM transformExpr
+      let seqTarget ← transformExpr target
+      return ⟨.InstanceCall seqTarget callee seqArgs.reverse, source⟩
+
+  | .Quantifier mode param trigger body =>
+      let seqBody ← transformExpr body
+      let seqTrigger ← match trigger with
+        | some t => pure (some (← transformExpr t))
+        | none => pure none
+      return ⟨.Quantifier mode param seqTrigger seqBody, source⟩
+
+  | .Old value =>
+      let seqValue ← transformExpr value
+      return ⟨.Old seqValue, source⟩
+
+  | .Fresh value =>
+      let seqValue ← transformExpr value
+      return ⟨.Fresh seqValue, source⟩
+
+  | .Assigned name =>
+      let seqName ← transformExpr name
+      return ⟨.Assigned seqName, source⟩
+
+  | .ProveBy value proof =>
+      let seqValue ← transformExpr value
+      let seqProof ← transformExpr proof
+      return ⟨.ProveBy seqValue seqProof, source⟩
+
+  | .ContractOf ty func =>
+      let seqFunc ← transformExpr func
+      return ⟨.ContractOf ty seqFunc, source⟩
+
   | _ => return expr
   termination_by (sizeOf expr, 0)
   decreasing_by
-    all_goals (simp_all; try term_by_mem)
+    all_goals (simp_all; try have := Condition.sizeOf_condition_lt ‹_›; try term_by_mem)
+    all_goals (apply Prod.Lex.left; try term_by_mem; try omega)
 
 /--
 Process a statement, handling any assignments in its sub-expressions.

@@ -177,7 +177,7 @@ procedure test()
   opaque
 {
   while($hole_0()) {
-
+    ⏎
   }
 };
 -/
@@ -198,7 +198,7 @@ procedure test()
 {
   while(true)
     invariant $hole_0() {
-
+    ⏎
   }
 };
 -/
@@ -339,7 +339,7 @@ procedure test()
   var p: bool;
   while(true)
     invariant p ==> $hole_0() {
-
+    ⏎
   }
 };
 -/
