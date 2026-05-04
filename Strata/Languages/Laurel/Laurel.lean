@@ -286,7 +286,9 @@ inductive StmtExpr : Type where
   | LiteralString (value : String)
   /-- A decimal literal. -/
   | LiteralDecimal (value : Decimal)
-  /-- A variable reference. -/
+  /-- A variable reference or declaration. When `var` is `Variable.Local`, this is a reference
+      that evaluates to the variable's value. When `var` is `Variable.Declare`, this is a
+      declaration without an initializer (used as a standalone statement in a block). -/
   | Var (var : Variable)
   /-- Assignment to one or more targets. Multiple targets are only supported with identifier targets and a call as the RHS. -/
   | Assign (targets : List (AstNode Variable)) (value : AstNode StmtExpr)
@@ -388,15 +390,6 @@ instance : Inhabited HighTypeMd where
 
 instance : Inhabited StmtExprMd where
   default := { val := default, source := none }
-
-instance : Std.ToFormat Variable where
-  format
-    | .Local name => Std.format name.text
-    | .Field _target fieldName => f!"<expr>.{fieldName.text}"
-    | .Declare param => f!"var {param.name.text}"
-
-instance : Std.ToFormat (AstNode Variable) where
-  format v := Std.format v.val
 
 def highEq (a : HighTypeMd) (b : HighTypeMd) : Bool := match _a: a.val, _b: b.val with
   | HighType.TVoid, HighType.TVoid => true

@@ -68,9 +68,10 @@ def collectExpr (expr : StmtExpr) : StateM AnalysisResult Unit := do
   | .Assign assignTargets v =>
       -- Check if any target is a field assignment (heap write)
       for ⟨assignTarget, _⟩ in assignTargets.attach do
-        match assignTarget.val with
-        | .Field _ _ =>
+        match _hav: assignTarget.val with
+        | .Field target _fieldName =>
             modify fun s => { s with writesHeapDirectly := true }
+            collectExprMd target
         | .Local _ | .Declare _ => pure ()
       collectExprMd v
   | .PureFieldUpdate t _ v => collectExprMd t; collectExprMd v
@@ -89,7 +90,16 @@ def collectExpr (expr : StmtExpr) : StateM AnalysisResult Unit := do
   | .ContractOf _ f => collectExprMd f
   | _ => pure ()
   termination_by sizeOf expr
-  decreasing_by all_goals (simp_wf; try term_by_mem)
+  decreasing_by
+    all_goals simp_wf
+    all_goals (try term_by_mem)
+    -- For target inside Field in assign target list (attach-based loop):
+    all_goals (
+      have := List.sizeOf_lt_of_mem ‹_›
+      have := AstNode.sizeOf_val_lt assignTarget
+      have : sizeOf assignTarget.val = sizeOf (Variable.Field target _fieldName) := by exact congrArg sizeOf _hav
+      simp at *
+      omega)
 end
 
 def analyzeProc (proc : Procedure) : AnalysisResult :=
@@ -323,8 +333,8 @@ where
         return ⟨ .Return v', source ⟩
     | .Assign targets v =>
 
-      let processFieldAssignments :
-        TransformM (List (AstNode Variable) × List (AstNode StmtExpr)) :=
+      -- Process field targets
+      let (processedTargets, updateStatements) <-
         targets.attach.foldlM (init := ([], [])) fun (accTargets, accStmts) ⟨t, _⟩ =>
           match _htv : t.val with
           | .Field target fieldName => do
@@ -340,36 +350,47 @@ where
               return (accTargets ++ [mkVarMd (.Declare ⟨freshVar, valTy⟩)], accStmts ++ [updateStmt])
           | _ => return (accTargets ++ [t], accStmts)
 
-      let (v', addedHeap) <- match _hv : v.val with
-        | .StaticCall callee args => do
-          let args' <- args.mapM recurse
-          let calleeWritesHeap ← writesHeap callee
-          let calleeReadsHeap ← readsHeap callee
-          let fullArgs := if calleeWritesHeap || calleeReadsHeap
-            then mkMd (.Var (.Local heapVar)) :: args'
-            else args'
-          pure (⟨.StaticCall callee fullArgs, v.source⟩, calleeWritesHeap)
-        | .InstanceCall callTarget _callee args => do
-          let callTarget' ← recurse callTarget
-          let args' <- args.mapM recurse
-          pure (⟨.InstanceCall callTarget' _callee args', v.source⟩, false)
-        | _ =>
-          pure (<- recurse v, false)
+      -- Process calls to heap mutating procedures
+      let (newAssign, suffixes) ← do
+        -- Detect calls and add a heap argument if needed
+        let (v', addedHeap) <- match _hv : v.val with
+          | .StaticCall callee args => do
+            let args' <- args.mapM recurse
+            let calleeWritesHeap ← writesHeap callee
+            let calleeReadsHeap ← readsHeap callee
+            if calleeWritesHeap then
+              pure (⟨ .StaticCall callee (mkMd (.Var (.Local heapVar)) :: args'), v.source ⟩, true)
+            else if calleeReadsHeap then
+              pure (⟨ .StaticCall callee (mkMd (.Var (.Local heapVar)) :: args'), v.source ⟩, false)
+            else
+              pure (⟨ .StaticCall callee args', v.source ⟩, false)
+          | .InstanceCall callTarget _callee args => do
+            let _callTarget' ← recurse callTarget
+            let _args' <- args.mapM recurse
+            pure (⟨ .InstanceCall _callTarget' _callee _args', v.source ⟩, false)
+          | _ =>
+            pure (<- recurse v, false)
+        let allTargets := if addedHeap
+          then ⟨ Variable.Local heapVar, v.source ⟩ :: processedTargets
+          else processedTargets
+        let newAssign: AstNode StmtExpr := ⟨ StmtExpr.Assign allTargets v', source ⟩
 
-      let (processedTargets, updateStatements) <- processFieldAssignments
-      let allTargets := if addedHeap
-        then ⟨ Variable.Local heapVar, v.source ⟩ :: processedTargets
-        else processedTargets
-      let newAssign: AstNode StmtExpr := ⟨ StmtExpr.Assign allTargets v', source ⟩
+        -- Convert a Declare variable to a Local reference (stripping the type).
+        -- Non-Declare variables pass through unchanged.
+        let variableAsRef(var: Variable): Variable := match var with
+          | .Declare param => Variable.Local param.name
+          | x => x
 
-      let declareToLocal (v : Variable) : Variable := match v with
-        | .Declare param => .Local param.name
-        | x => x
+        -- Make sure the result of the StmtExpr is still the same
+        let suffixes: List (AstNode StmtExpr) := if valueUsed && targets.length == 1
+          then updateStatements ++ [⟨ StmtExpr.Var $ variableAsRef $
+            -- ! is valid because
+            -- have : allTargets.length >= targets.length + if addedHeap then 1 else 0 := by sorry;
+            if addedHeap then allTargets[1]!.val else allTargets[0]!.val, source⟩]
+          else updateStatements
+        pure (newAssign, suffixes)
 
-      let suffixes: List (AstNode StmtExpr) := if valueUsed && targets.length == 1
-        then updateStatements ++ [⟨ StmtExpr.Var $ declareToLocal $ if addedHeap then allTargets[1]!.val else allTargets[0]!.val, source⟩]
-        else updateStatements
-
+      -- Create a block if necessary
       if suffixes.length > 0 then
         return ⟨ StmtExpr.Block (newAssign :: suffixes) none, source ⟩
       else
@@ -423,47 +444,14 @@ where
       all_goals (try have := AstNode.sizeOf_val_lt exprMd)
       all_goals (try have := AstNode.sizeOf_val_lt v)
       all_goals (try term_by_mem)
-      all_goals (try omega)
       all_goals (try (cases exprMd; simp_all; omega))
-      -- For sub-expressions of StaticCall/InstanceCall inside Assign value:
-      all_goals (try (
-        have : sizeOf args < sizeOf v := by
-          have h1 := AstNode.sizeOf_val_lt v
-          rw [_hv] at h1; simp at h1; omega
-        term_by_mem))
-      -- For target inside Field in single-target case and multi-target Field recursion:
-      all_goals (try (
-        have := AstNode.sizeOf_val_lt targetHead
-        have : sizeOf target < sizeOf targetHead.val := by
-          cases targetHead with | mk val _ _ =>
-            simp only []
-            subst_vars
-            omega
-        omega))
-      -- For field inner expressions in attach-based mapM:
-      all_goals (try (
-        have := List.sizeOf_lt_of_mem ‹_›
-        have := AstNode.sizeOf_val_lt t
-        have : sizeOf t.val = sizeOf (Variable.Field target fieldName) := by exact congrArg sizeOf _htv
-        omega))
-      -- For field inner expressions in attach-based foldlM:
+      -- For field inner expressions in attach-based:
       all_goals (try (
         have := List.sizeOf_lt_of_mem ‹_›
         have := AstNode.sizeOf_val_lt t
         have : sizeOf t.val = sizeOf (Variable.Field target fieldName) := by exact congrArg sizeOf _htv
         simp_all
         omega))
-      -- For callTarget/args inside InstanceCall/StaticCall in value:
-      all_goals (try (
-        have : sizeOf callTarget < sizeOf v := by
-          have h1 := AstNode.sizeOf_val_lt v
-          rw [_hv] at h1; simp at h1; omega
-        omega))
-      all_goals (try (
-        have : sizeOf args < sizeOf v := by
-          have h1 := AstNode.sizeOf_val_lt v
-          rw [_hv] at h1; simp at h1; omega
-        term_by_mem))
       -- Remaining goals
       all_goals (
         cases exprMd with | mk val src mmd =>
