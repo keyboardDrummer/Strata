@@ -25,34 +25,31 @@ public section
 
 private def returnLabel : String := "$return"
 
-private def mkMd (e : StmtExpr) : StmtExprMd := { val := e, source := none }
-private def mkVarMd (v : Variable) : VariableMd := { val := v, source := none }
-
 /-- Replace `Return val` with `output := val; exit "$return"` (or just `exit`
     for valueless returns). Uses `mapStmtExpr` for bottom-up traversal. -/
-private def replaceReturn (outputs : List Parameter) (expr : StmtExprMd) : StmtExprMd :=
+private def replaceReturn (source: Option FileRange) (outputs : List Parameter) (expr : StmtExprMd) : StmtExprMd :=
   mapStmtExpr (fun e =>
     match e.val with
     | .Return (some val) =>
       match outputs with
       | [out] =>
-        let assign := mkMd (.Assign [mkVarMd (.Local out.name)] val)
-        let exit := mkMd (.Exit returnLabel)
+        let assign := ⟨ .Assign [⟨ .Local out.name, source⟩ ] val, source⟩
+        let exit := ⟨ .Exit returnLabel, source⟩
         ⟨.Block [assign, exit] none, e.source⟩
-      | _ => mkMd (.Exit returnLabel)
-    | .Return none => mkMd (.Exit returnLabel)
+      | _ => ⟨ .Exit returnLabel, source⟩
+    | .Return none => ⟨ .Exit returnLabel, source⟩
     | _ => e) expr
 
 /-- Transform a single procedure: wrap body in a labelled block and replace returns. -/
 private def eliminateReturnStmts (proc : Procedure) : Procedure :=
   match proc.body with
   | .Opaque postconds (some impl) mods =>
-    let impl' := replaceReturn proc.outputs impl
-    let wrapped := mkMd (.Block [impl'] (some returnLabel))
+    let impl' := (replaceReturn proc.name.source) proc.outputs impl
+    let wrapped : StmtExprMd := { val := .Block [impl'] (some returnLabel), source := impl.source }
     { proc with body := .Opaque postconds (some wrapped) mods }
   | .Transparent body =>
-    let body' := replaceReturn proc.outputs body
-    let wrapped := mkMd (.Block [body'] (some returnLabel))
+    let body' := (replaceReturn proc.name.source) proc.outputs body
+    let wrapped : StmtExprMd := { val := .Block [body'] (some returnLabel), source := body.source }
     { proc with body := .Transparent wrapped }
   | _ => proc
 
