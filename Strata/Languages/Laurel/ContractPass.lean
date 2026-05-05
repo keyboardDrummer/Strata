@@ -150,12 +150,9 @@ private def transformProcBody (proc : Procedure) (info : ContractInfo) : Body :=
     else []
   let postAssert : List StmtExprMd :=
     if info.hasPostCondition then
-      let baseSrc := match postconds.head? with
-        | some pc => pc.condition.source
-        | none => none
-      let summary := info.postSummary.getD "postcondition"
-      [⟨.Assert { condition := conjoin (postconds.map (·.condition)), summary := some summary },
-        baseSrc⟩]
+      postconds.map fun pc =>
+        let summary := pc.summary.getD "postcondition"
+        ⟨.Assert { condition := pc.condition, summary := some summary }, pc.condition.source⟩
     else []
   match proc.body with
   | .Transparent body =>
