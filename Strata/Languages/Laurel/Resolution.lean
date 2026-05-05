@@ -548,6 +548,7 @@ def resolveProcedure (proc : Procedure) : ResolveM Procedure := do
              isFunctional := proc.isFunctional,
              preconditions := pres', decreases := dec',
              invokeOn := invokeOn',
+             axioms := proc.axioms,
              body := body' }
 
 /-- Resolve a field: define its name under the qualified key (OwnerType.fieldName) and resolve its type. -/
@@ -586,6 +587,7 @@ def resolveInstanceProcedure (typeName : Identifier) (proc : Procedure) : Resolv
              isFunctional := proc.isFunctional,
              preconditions := pres', decreases := dec',
              invokeOn := invokeOn',
+             axioms := proc.axioms,
              body := body' }
 
 /-- Resolve a type definition. -/

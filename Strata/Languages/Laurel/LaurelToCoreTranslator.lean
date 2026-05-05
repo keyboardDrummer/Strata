@@ -769,10 +769,10 @@ def translateLaurelToCore (options: LaurelTranslateOptions) (program : Program) 
         let procDecls ← procs.flatMapM fun proc => do
           let procDecl ← translateProcedure proc
           -- Translate axioms (populated by the contract pass from invokeOn + ensures)
+          -- Axioms are emitted after the procedure that introduces them.
           let axiomDecls ← proc.axioms.mapM fun ax => do
             let coreExpr ← translateExpr ax [] (isPureContext := true)
             return Core.Decl.ax { name := s!"invokeOn_{proc.name.text}", e := coreExpr } (identifierToCoreMd proc.name)
-
           return [Core.Decl.proc procDecl (identifierToCoreMd proc.name)] ++ axiomDecls
         return procDecls
     | .datatypes dts => do

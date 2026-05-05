@@ -20,6 +20,7 @@ function assertP(x: int): int requires P(x);
 
 procedure needsPAndQsInvoke1(): int opaque {
   assertP(3)
+//^^^^^^^^^^ error: precondition does not hold
 };
 
 procedure PAndQ(x: int)
@@ -42,7 +43,7 @@ procedure axiomDoesNotFireBecauseOfPattern(x: int)
   opaque
 {
   assert Q(x)
-//^^^^^^^^^^^ error: assertion does not hold
+//^^^^^^^^^^^ error: assertion could not be proved
 };
 
 function A(x: int, y: real): bool;
@@ -62,7 +63,7 @@ procedure invokeB(x: int, y :real)
   opaque
 {
   assert B(y)
-//^^^^^^^^^^^ error: assertion does not hold
+//^^^^^^^^^^^ error: assertion could not be proved
 };
 
 function R(x: int): bool;
@@ -70,7 +71,7 @@ procedure badPostcondition(x: int)
   invokeOn R(x)
   opaque
   ensures R(x)
-//        ^^^^ error: postcondition does not hold
+//        ^^^^ error: postcondition could not be proved
 {
 };
 

@@ -267,7 +267,8 @@ private def rewriteCallSitesInProc (contractInfoMap : Std.HashMap String Contrac
   | _ => proc
 
 /-- Build an axiom expression from `invokeOn` trigger and ensures clauses.
-    Produces `∀ p1, ∀ p2, ..., ∀ pn :: { trigger } (ensures1 && ensures2 && ...)`. -/
+    Produces `∀ p1, ∀ p2, ..., ∀ pn :: { trigger } (ensures1 && ensures2 && ...)`.
+    The trigger controls when the SMT solver instantiates the axiom. -/
 private def mkInvokeOnAxiom (params : List Parameter) (trigger : StmtExprMd)
     (postconds : List Condition) : StmtExprMd :=
   let body := conjoin (postconds.map (·.condition))
