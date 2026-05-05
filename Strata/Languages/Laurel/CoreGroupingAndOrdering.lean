@@ -62,11 +62,13 @@ def collectStaticCallNames (expr : StmtExprMd) : List String :=
       | some eelse => collectStaticCallNames eelse
       | none => []
   | .Block stmts _ => stmts.flatMap (fun s => collectStaticCallNames s)
-  | .Assign _targets v =>
-      -- Targets are Variables; Field targets can contain StmtExpr children,
-      -- but field-target assigns are eliminated before this pass runs,
-      -- so we only need to collect from the value.
-      collectStaticCallNames v
+  | .Assign targets v =>
+      -- Field targets contain StmtExpr children; defensively recurse into them
+      -- even though field-target assigns are currently eliminated before this pass.
+      let targetCalls := targets.attach.flatMap fun ⟨t, _⟩ => match _htv : t.val with
+        | .Field inner _fieldName => collectStaticCallNames inner
+        | _ => []
+      targetCalls ++ collectStaticCallNames v
   | .Return v =>
       match v with
       | some x => collectStaticCallNames x
@@ -100,6 +102,10 @@ decreasing_by
   all_goals simp_wf
   all_goals (try have := AstNode.sizeOf_val_lt expr)
   all_goals (try term_by_mem)
+  all_goals (try (
+    have := List.sizeOf_lt_of_mem ‹_›
+    have := Variable.sizeOf_field_target_lt_of_eq _htv
+    omega))
   all_goals omega
 
 /--
