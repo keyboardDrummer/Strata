@@ -34,19 +34,19 @@ procedure caller()
   var y: int := hasRequires(3)
 };
 
-//function aFunctionWithPrecondition(x: int): int
-//  requires x == 10
-//{
-//  x
-//};
+function aFunctionWithPrecondition(x: int): int
+  requires x == 10
+{
+  x
+};
 
-//procedure aFunctionWithPreconditionCaller()
-//  opaque
-//{
-//  var x: int := aFunctionWithPrecondition(0)
-// error: assertion does not hold
+procedure aFunctionWithPreconditionCaller()
+  opaque
+{
+  var x: int := aFunctionWithPrecondition(0)
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition does not hold
 // Error ranges are too wide because Core does not use expression locations
-//};
+};
 
 procedure multipleRequires(x: int, y: int) returns (r: int)
   requires x > 0
@@ -64,20 +64,20 @@ procedure multipleRequiresCaller()
 //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition does not hold
 };
 
-// function funcMultipleRequires(x: int, y: int): int
-//  requires x > 0
-//  requires y > 0
-//{
-//  x + y
-//};
+function funcMultipleRequires(x: int, y: int): int
+  requires x > 0
+  requires y > 0
+{
+  x + y
+};
 
-//procedure funcMultipleRequiresCaller()
-//  opaque
-//{
-//  var a: int := funcMultipleRequires(1, 2);
-//  var b: int := funcMultipleRequires(1, -1)
-//  error: assertion does not hold
-//};
+procedure funcMultipleRequiresCaller()
+  opaque
+{
+  var a: int := funcMultipleRequires(1, 2);
+  var b: int := funcMultipleRequires(1, -1)
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition does not hold
+};
 "
 
 #guard_msgs (drop info, error) in
