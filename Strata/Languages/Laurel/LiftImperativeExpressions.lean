@@ -113,24 +113,16 @@ private def onlyKeepSideEffectStmtsAndLast (stmts : List StmtExprMd) : LiftM (Li
   match stmts with
   | [] => return []
   | _ =>
+    -- return stmts
     let last := stmts.getLast!
     let nonLast ← stmts.dropLast.flatMapM (fun s =>
       match s.val with
       | .Var (.Declare ..) | .Assign ([⟨.Declare .., _⟩]) _ => do
-          -- This addPrepend is a hack to work around Core not having let expressions
-          -- Otherwise we could keep them in the block
-          prepend s
-          pure []
-      | .Assert _ => do
-          -- Hack to work around Core not supporting assert expressions
-          -- Otherwise we could keep them in the block
-          prepend s
-          pure []
-      | .Assume _ => do
-          -- Hack to work around Core not supporting assume expressions
-          -- Otherwise we could keep them in the block
-          prepend s
-          pure []
+          pure [s]
+      -- | .Assert _ => do
+      --     pure [s]
+      -- | .Assume _ => do
+      --     pure [s]
 
       /-
       Any other impure StmtExpr, like .Assign, .Exit or .Return,
@@ -375,11 +367,13 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
 
   | .Assume cond =>
       let seqCond ← transformExpr cond
-      return ⟨.Assume seqCond, source⟩
+      prepend ⟨.Assume seqCond, source⟩
+      default
 
   | .Assert cond =>
       let seqCondExpr ← transformExpr cond.condition
-      return ⟨.Assert { cond with condition := seqCondExpr }, source⟩
+      prepend ⟨.Assert { cond with condition := seqCondExpr }, source⟩
+      default
 
   | .Return (some retExpr) =>
       let seqRet ← transformExpr retExpr

@@ -243,7 +243,12 @@ private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
 /-- Rewrite call sites in a statement/expression tree. Processes Block children
     at the statement level to avoid interfering with expression-level calls.
     For each statement-level call to a contracted procedure, inserts
-    `assert pre(args)` before and `assume post(args)` after. -/
+    `assert pre(args)` before and `assume post(args)` after.
+
+    Additionally, calls to contracted procedures that appear nested inside
+    expressions (e.g. `f(x) + y`) are wrapped in a block so that the
+    `assume`/`assert` can be placed before the call:
+    `{ assert pre(args); assume post(args); f(args) }`. -/
 private def rewriteCallSites (contractInfoMap : Std.HashMap String ContractInfo)
     (expr : StmtExprMd) : StmtExprMd :=
   let result := mapStmtExpr (fun e =>
@@ -252,6 +257,22 @@ private def rewriteCallSites (contractInfoMap : Std.HashMap String ContractInfo)
       let stmts' := stmts.flatMap (rewriteStmt contractInfoMap)
       if stmts'.length == stmts.length then e
       else ⟨.Block stmts' label, e.source⟩
+    | .StaticCall callee args =>
+      -- Handle calls to contracted procedures in expression position.
+      -- Wrap the call in a block: { assert pre(args); assume post(args); call }
+      match contractInfoMap.get? callee.text with
+      | some info =>
+        let src := e.source
+        let mkWithSrc (se : StmtExpr) : StmtExprMd := ⟨se, src⟩
+        let fullArgs := info.implicitArgs ++ args
+        let preAssert := if info.hasPreCondition
+          then [mkWithSrc (.Assert { condition := mkCall info.preName fullArgs, summary := info.preSummary })] else []
+        let postAssume := if info.hasPostCondition
+          then [mkWithSrc (.Assume (mkCall info.postName fullArgs))] else []
+        let stmts := preAssert ++ postAssume ++ [e]
+        if stmts.length == 1 then e
+        else ⟨.Block stmts none, src⟩
+      | none => e
     | _ => e) expr
   -- Handle top-level non-Block statements (e.g., bare Assign or StaticCall)
   let expanded := rewriteStmt contractInfoMap result
