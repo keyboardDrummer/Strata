@@ -169,25 +169,27 @@ private def transformProcBody (proc : Procedure) (info : ContractInfo) : Body :=
 /-- Generate temporary variable assignments for input arguments at a call site.
     Returns (temp declarations+assignments, temp variable references).
     Uses the parameter types from the procedure's contract info so that
-    resolution can type-check the generated temporaries. -/
+    resolution can type-check the generated temporaries.
+    `callIdx` distinguishes multiple calls to the same procedure. -/
 private def mkTempAssignments (args : List StmtExprMd) (calleeName : String)
-    (inputParams : List Parameter) (src : Option FileRange)
+    (inputParams : List Parameter) (callIdx : Nat) (src : Option FileRange)
     : List StmtExprMd × List StmtExprMd :=
   let indexed := args.zipIdx
   let decls := indexed.map fun (arg, i) =>
-    let tempName := s!"${calleeName}$arg{i}"
+    let tempName := s!"${calleeName}${callIdx}$arg{i}"
     let paramType := match inputParams[i]? with
       | some p => p.type
       | none => { val := .Unknown, source := none }
     let param : Parameter := { name := mkId tempName, type := paramType }
     ⟨StmtExpr.Assign [mkVarMd (.Declare param)] arg, src⟩
   let refs := indexed.map fun (_, i) =>
-    let tempName := s!"${calleeName}$arg{i}"
+    let tempName := s!"${calleeName}${callIdx}$arg{i}"
     mkMd (.Var (.Local (mkId tempName)))
   (decls, refs)
 
 /-- Rewrite a single statement that may be a call to a contracted procedure.
     Returns a list of statements (the original plus any inserted assert/assume).
+    Takes and returns a call counter for generating unique temp variable names.
 
     At call sites:
     1. Assign input arguments to temporary variables.
@@ -195,17 +197,17 @@ private def mkTempAssignments (args : List StmtExprMd) (calleeName : String)
     3. Execute the call using temps as arguments.
     4. Assume postcondition using temps + output variables. -/
 private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
-    (e : StmtExprMd) : List StmtExprMd :=
+    (callCounter : Nat) (e : StmtExprMd) : List StmtExprMd × Nat :=
   let src := e.source
   let mkWithSrc (se : StmtExpr) : StmtExprMd := ⟨se, src⟩
   match e.val with
   | .Assign targets (.mk (.StaticCall callee args) callSrc) =>
     match contractInfoMap.get? callee.text with
     | some info =>
-      let (tempDecls, tempRefs) := mkTempAssignments args callee.text info.inputParams src
+      let (tempDecls, tempRefs) := mkTempAssignments args callee.text info.inputParams callCounter src
       let callWithTemps : StmtExprMd := ⟨.Assign targets ⟨.StaticCall callee tempRefs, callSrc⟩, src⟩
       let preAssert := if info.hasPreCondition
-        then [mkWithSrc (.Assert { condition := mkCall info.preName tempRefs, summary := info.preSummary })] else []
+        then [mkWithSrc (.Assert { condition := mkCall info.preName tempRefs, summary := some (info.preSummary.getD "precondition") })] else []
       -- After the call, assume postcondition with temps (inputs) + output variables
       let outputArgs := targets.filterMap fun t =>
         match t.val with
@@ -214,34 +216,41 @@ private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
         | _ => none
       let postAssume := if info.hasPostCondition
         then [mkWithSrc (.Assume (mkCall info.postName (tempRefs ++ outputArgs)))] else []
-      tempDecls ++ preAssert ++ [callWithTemps] ++ postAssume
-    | none => [e]
+      (tempDecls ++ preAssert ++ [callWithTemps] ++ postAssume, callCounter + 1)
+    | none => ([e], callCounter)
   | .StaticCall callee args =>
     match contractInfoMap.get? callee.text with
     | some info =>
-      let (tempDecls, tempRefs) := mkTempAssignments args callee.text info.inputParams src
+      let (tempDecls, tempRefs) := mkTempAssignments args callee.text info.inputParams callCounter src
       let callWithTemps : StmtExprMd := mkWithSrc (.StaticCall callee tempRefs)
       let preAssert := if info.hasPreCondition
-        then [mkWithSrc (.Assert { condition := mkCall info.preName tempRefs, summary := info.preSummary })] else []
+        then [mkWithSrc (.Assert { condition := mkCall info.preName tempRefs, summary := some (info.preSummary.getD "precondition") })] else []
       let postAssume := if info.hasPostCondition
         then [mkWithSrc (.Assume (mkCall info.postName tempRefs))] else []
-      tempDecls ++ preAssert ++ postAssume ++ [callWithTemps]
-    | none => [e]
-  | _ => [e]
+      (tempDecls ++ preAssert ++ postAssume ++ [callWithTemps], callCounter + 1)
+    | none => ([e], callCounter)
+  | _ => ([e], callCounter)
 
 /-- Rewrite call sites in a statement/expression tree. Processes Block children
     at the statement level to avoid interfering with expression-level calls. -/
 private def rewriteCallSites (contractInfoMap : Std.HashMap String ContractInfo)
     (expr : StmtExprMd) : StmtExprMd :=
-  let result := mapStmtExpr (fun e =>
-    match e.val with
-    | .Block stmts label =>
-      let stmts' := stmts.flatMap (rewriteStmt contractInfoMap)
-      if stmts'.length == stmts.length then e
-      else ⟨.Block stmts' label, e.source⟩
-    | _ => e) expr
+  let (result, _) := StateT.run (s := (0 : Nat)) <|
+    mapStmtExprM (m := StateM Nat) (fun e => do
+      match e.val with
+      | .Block stmts label =>
+        let mut newStmts : List StmtExprMd := []
+        let mut counter ← get
+        for stmt in stmts do
+          let (expanded, counter') := rewriteStmt contractInfoMap counter stmt
+          newStmts := newStmts ++ expanded
+          counter := counter'
+        set counter
+        if newStmts.length == stmts.length then return e
+        else return ⟨.Block newStmts label, e.source⟩
+      | _ => return e) expr
   -- Handle top-level non-Block statements (e.g., bare Assign or StaticCall)
-  let expanded := rewriteStmt contractInfoMap result
+  let (expanded, _) := rewriteStmt contractInfoMap 0 result
   match expanded with
   | [single] => single
   | many => mkMd (.Block many none)

@@ -192,6 +192,12 @@ private def runLaurelPasses (options : LaurelTranslateOptions) (program : Progra
   program := contractPass program
   emit "ContractPass" "laurel.st" program
 
+  -- Re-resolve after contractPass so the model includes the generated
+  -- helper procedures ($pre, $post) and their isFunctional status.
+  let contractResult := resolve program (some model)
+  program := contractResult.program
+  model := contractResult.model
+
   return (program, model, allDiags, allStats)
 
 /--
