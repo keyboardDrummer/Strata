@@ -48,9 +48,15 @@ def mapStmtExprM [Monad m] (f : StmtExprMd → m StmtExprMd) (expr : StmtExprMd)
   | .Return v =>
     pure ⟨.Return (← v.attach.mapM fun ⟨e, _⟩ => mapStmtExprM f e), source⟩
   | .Assign targets value =>
-    pure ⟨.Assign (← targets.attach.mapM fun ⟨e, _⟩ => mapStmtExprM f e) (← mapStmtExprM f value), source⟩
-  | .FieldSelect target fieldName =>
-    pure ⟨.FieldSelect (← mapStmtExprM f target) fieldName, source⟩
+    let mappedTargets ← targets.attach.mapM fun ⟨v, _⟩ => do
+      match hv : v.val with
+      | .Local _ => pure v
+      | .Field target fieldName =>
+        have : sizeOf target < sizeOf v := Variable.sizeOf_field_target v hv
+        pure ⟨.Field (← mapStmtExprM f target) fieldName, v.source⟩
+    pure ⟨.Assign mappedTargets (← mapStmtExprM f value), source⟩
+  | .Variable (.Field target fieldName) =>
+    pure ⟨.Variable (.Field (← mapStmtExprM f target) fieldName), source⟩
   | .PureFieldUpdate target fieldName newValue =>
     pure ⟨.PureFieldUpdate (← mapStmtExprM f target) fieldName (← mapStmtExprM f newValue), source⟩
   | .StaticCall callee args =>
@@ -88,7 +94,7 @@ def mapStmtExprM [Monad m] (f : StmtExprMd → m StmtExprMd) (expr : StmtExprMd)
   -- it must get its own arm above; otherwise all passes will silently
   -- skip recursion into those children.
   | .Exit _ | .LiteralInt _ | .LiteralBool _ | .LiteralString _ | .LiteralDecimal _
-  | .Identifier _ | .New _ | .This | .Abstract | .All | .Hole .. => pure expr
+  | .Variable (.Local _) | .New _ | .This | .Abstract | .All | .Hole .. => pure expr
   f rebuilt
 termination_by sizeOf expr
 decreasing_by

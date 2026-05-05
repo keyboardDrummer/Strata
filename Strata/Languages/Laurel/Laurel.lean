@@ -236,6 +236,16 @@ inductive Body where
   | External
 
 /--
+A variable reference in Laurel. Used as the target of assignments and
+as a general variable/field access expression.
+-/
+inductive Variable where
+  /-- A local variable reference by name. -/
+  | Local (name : Identifier)
+  /-- Read a field from a target expression. Combined with `Assign` for field writes. -/
+  | Field (target : AstNode StmtExpr) (fieldName : Identifier)
+
+/--
 The unified statement-expression type for Laurel programs.
 
 `StmtExpr` contains both statement-like constructs (conditionals, loops,
@@ -266,12 +276,10 @@ inductive StmtExpr : Type where
   | LiteralString (value : String)
   /-- A decimal literal. -/
   | LiteralDecimal (value : Decimal)
-  /-- A variable reference by name. -/
-  | Identifier (name : Identifier)
-  /-- Assignment to one or more targets. Multiple targets are only allowed when the value is a `StaticCall` to a procedure with multiple outputs. -/
-  | Assign (targets : List (AstNode StmtExpr)) (value : AstNode StmtExpr)
-  /-- Read a field from a target expression. Combined with `Assign` for field writes. -/
-  | FieldSelect (target : AstNode StmtExpr) (fieldName : Identifier)
+  /-- A variable reference by name or field access. -/
+  | Variable (ref : Variable)
+  /-- Assignment to one or more targets. Multiple targets are only allowed with identifier targets and when the value is a `StaticCall` to a procedure with multiple outputs. -/
+  | Assign (targets : List (AstNode Variable)) (value : AstNode StmtExpr)
   /-- Update a field on a pure (value) type, producing a new value. -/
   | PureFieldUpdate (target : AstNode StmtExpr) (fieldName : Identifier) (newValue : AstNode StmtExpr)
   /-- Call a static procedure by name with the given arguments. -/
@@ -324,9 +332,15 @@ end
 
 @[expose] abbrev HighTypeMd := AstNode HighType
 @[expose] abbrev StmtExprMd := AstNode StmtExpr
+@[expose] abbrev VariableMd := AstNode Variable
 
 theorem AstNode.sizeOf_val_lt {t : Type} [SizeOf t] (e : AstNode t) : sizeOf e.val < sizeOf e := by
   cases e; grind
+
+theorem Variable.sizeOf_field_target (v : AstNode Variable)
+    (h : v.val = .Field target fieldName) : sizeOf target < sizeOf v := by
+  have h1 := AstNode.sizeOf_val_lt v
+  rw [h] at h1; grind
 
 theorem Condition.sizeOf_condition_lt (c : Condition) : sizeOf c.condition < 1 + sizeOf c := by
   cases c; grind

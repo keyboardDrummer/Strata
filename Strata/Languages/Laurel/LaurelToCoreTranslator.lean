@@ -162,7 +162,7 @@ def translateExpr (expr : StmtExprMd)
   | .LiteralInt i => return .const () (.intConst i)
   | .LiteralString s => return .const () (.strConst s)
   | .LiteralDecimal d => return .const () (.realConst (Strata.Decimal.toRat d))
-  | .Identifier name =>
+  | .Variable (.Local name) =>
       -- First check if this name is bound by an enclosing quantifier
       match boundVars.findIdx? (· == name) with
       | some idx =>
@@ -285,7 +285,7 @@ def translateExpr (expr : StmtExprMd)
   | .IsType _ _ =>
       throwExprDiagnostic $ diagnosticFromSource expr.source "IsType should have been lowered" DiagnosticType.StrataBug
   | .New _ => throwExprDiagnostic $ diagnosticFromSource expr.source s!"New should have been eliminated by typeHierarchyTransform" DiagnosticType.StrataBug
-  | .FieldSelect target fieldId =>
+  | .Variable (.Field target fieldId) =>
       -- Field selects should have been eliminated by heap parameterization
       -- If we see one here, it's an error in the pipeline
       throwExprDiagnostic $ diagnosticFromSource expr.source s!"FieldSelect should have been eliminated by heap parameterization: {Std.ToFormat.format target}#{fieldId.text}" DiagnosticType.StrataBug
@@ -399,7 +399,7 @@ def translateStmt (stmt : StmtExprMd)
           return [Core.Statement.init ident coreType .nondet md]
   | .Assign targets value =>
       match targets with
-      | [⟨ .Identifier targetId, _ ⟩] =>
+      | [⟨ .Local targetId, _ ⟩] =>
           let ident := ⟨targetId.text, ()⟩
           -- Check if RHS is a procedure call (not a function)
           match value.val with
@@ -444,7 +444,7 @@ def translateStmt (stmt : StmtExprMd)
               let coreArgs ← args.mapM (fun a => translateExpr a)
               let lhsIdents := targets.filterMap fun t =>
                 match t.val with
-                | .Identifier name => some (⟨name.text, ()⟩)
+                | .Local name => some (⟨name.text, ()⟩)
                 | _ => none
               let outArgs : List (Core.CallArg Core.Expression) := lhsIdents.map .outArg
               return [Core.Statement.call callee.text (coreArgs.map .inArg ++ outArgs) (astNodeToCoreMd value)]
@@ -452,7 +452,7 @@ def translateStmt (stmt : StmtExprMd)
               -- Instance method call: havoc all target variables
               let havocStmts := targets.filterMap fun t =>
                 match t.val with
-                | .Identifier name => some (Core.Statement.havoc ⟨name.text, ()⟩ md)
+                | .Local name => some (Core.Statement.havoc ⟨name.text, ()⟩ md)
                 | _ => none
               return (havocStmts)
           | _ =>
