@@ -90,6 +90,9 @@ private def emptyMd : Option String := none
 /-- Wrap a StmtExpr value with empty metadata -/
 private def bare (v : StmtExpr) : StmtExprMd := ⟨v, none⟩
 
+/-- Wrap a Variable value with empty metadata -/
+private def bare' (v : Variable) : VariableMd := ⟨v, none⟩
+
 /-- Wrap a HighType value with empty metadata -/
 private def bareType (v : HighType) : HighTypeMd := ⟨v, none⟩
 
@@ -157,6 +160,12 @@ private def computeType (expr : StmtExprMd) : LiftM HighTypeMd := do
   let s ← get
   return computeExprType s.model expr
 
+private def computeVariableType (v : VariableMd) : LiftM HighTypeMd := do
+  let s ← get
+  match v.val with
+  | .Local id => return (s.model.get id).getType
+  | .Field _ fieldName => return (s.model.get fieldName).getType
+
 /-- Check if an expression contains any assignments or imperative calls (recursively). -/
 def containsAssignmentOrImperativeCall (model: SemanticModel) (expr : StmtExprMd) : Bool :=
   match expr with
@@ -201,18 +210,18 @@ Shared logic for lifting an assignment in expression position:
 prepends the assignment, creates before-snapshots for all targets,
 and updates substitutions. The value should already be transformed by the caller.
 -/
-private def liftAssignExpr (targets : List StmtExprMd) (seqValue : StmtExprMd)
+private def liftAssignExpr (targets : List (AstNode Variable)) (seqValue : StmtExprMd)
     (source : Option FileRange) : LiftM Unit := do
   -- Prepend the assignment itself
   prepend (⟨.Assign targets seqValue, source⟩)
   -- Create a before-snapshot for each target and update substitutions
   for target in targets do
     match target.val with
-    | .Identifier varName =>
+    | .Local varName =>
         let snapshotName ← freshTempFor varName
-        let varType ← computeType target
+        let varType ← computeVariableType target
         -- Snapshot goes before the assignment (cons pushes to front)
-        prepend (⟨.LocalVariable snapshotName varType (some (⟨.Identifier varName, source⟩)), source⟩)
+        prepend (⟨.LocalVariable snapshotName varType (some (⟨.Variable (.Local varName), source⟩)), source⟩)
         setSubst varName snapshotName
     | _ => pure ()
 
@@ -225,8 +234,8 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
   match expr with
   | AstNode.mk val source =>
   match val with
-  | .Identifier name =>
-      return ⟨.Identifier (← getSubst name), source⟩
+  | .Variable (.Local name) =>
+      return ⟨.Variable (.Local (← getSubst name)), source⟩
 
   | .LiteralInt _ | .LiteralBool _ | .LiteralString _ | .LiteralDecimal _ => return expr
 
@@ -234,7 +243,7 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       -- Nondeterministic typed hole: lift to a fresh variable with no initializer (havoc)
       let holeVar ← freshCondVar
       prepend (bare (.LocalVariable holeVar holeType none))
-      return bare (.Identifier holeVar)
+      return bare (.Variable (.Local holeVar))
 
   | .Assign targets value =>
       -- The expression result is the current substitution for the first target
@@ -244,7 +253,7 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         | _ => return expr
 
       let resultExpr ← match firstTarget.val with
-        | .Identifier varName => pure (⟨.Identifier (← getSubst varName), source⟩)
+        | .Local varName => pure (⟨.Variable (.Local (← getSubst varName)), source⟩)
         | _ =>
           dbg_trace "Strata bug: non-identifier targets should have been removed before the lift expression phase";
           return expr
@@ -272,10 +281,10 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       let callResultType ← computeType expr
       let liftedCall := [
         ⟨ (.LocalVariable callResultVar callResultType none), source⟩,
-        ⟨.Assign [bare (.Identifier callResultVar)] seqCall, source⟩
+        ⟨.Assign [bare' (.Local callResultVar)] seqCall, source⟩
       ]
       modify fun s => { s with prependedStmts := s.prependedStmts ++ liftedCall}
-      return bare (.Identifier callResultVar)
+      return bare (.Variable (.Local callResultVar))
 
   | .IfThenElse cond thenBranch elseBranch =>
       let model :=  (← get).model
@@ -294,14 +303,14 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         modify fun s => { s with prependedStmts := [], subst := [] }
         let seqThen ← transformExpr thenBranch
         let thenPrepends ← takePrepends
-        let thenBlock := bare (.Block (thenPrepends ++ [⟨.Assign [bare (.Identifier condVar)] seqThen, source⟩]) none)
+        let thenBlock := bare (.Block (thenPrepends ++ [⟨.Assign [bare' (.Local condVar)] seqThen, source⟩]) none)
         -- Process else-branch from scratch
         modify fun s => { s with prependedStmts := [], subst := [] }
         let seqElse ← match elseBranch with
           | some e => do
               let se ← transformExpr e
               let elsePrepends ← takePrepends
-              pure (some (bare (.Block (elsePrepends ++ [⟨.Assign [bare (.Identifier condVar)] se, source⟩]) none)))
+              pure (some (bare (.Block (elsePrepends ++ [⟨.Assign [bare' (.Local condVar)] se, source⟩]) none)))
           | none => pure none
         -- Restore outer state
         modify fun s => { s with subst := savedSubst, prependedStmts := savedPrepends }
@@ -313,7 +322,7 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         -- Output order: declaration, then if-then-else
         prepend (⟨.IfThenElse seqCond thenBlock seqElse, source⟩)
         prepend (bare (.LocalVariable condVar condType none))
-        return bare (.Identifier condVar)
+        return bare (.Variable (.Local condVar))
       else
         -- No assignments in branches — recurse normally
         let seqCond ← transformExpr cond
@@ -339,7 +348,7 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
             prepend (⟨.LocalVariable name ty (some seqInit), expr.source⟩)
         | none =>
             prepend (⟨.LocalVariable name ty none, expr.source⟩)
-        return ⟨.Identifier (← getSubst name), expr.source⟩
+        return ⟨.Variable (.Local (← getSubst name)), expr.source⟩
       else
         return expr
 

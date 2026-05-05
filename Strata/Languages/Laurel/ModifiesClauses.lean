@@ -103,10 +103,10 @@ def buildModifiesEnsures (proc: Procedure) (model: SemanticModel) (modifiesExprs
   let entries := extractModifiesEntries model modifiesExprs
   let objName : Identifier := "$modifies_obj"
   let fldName : Identifier := "$modifies_fld"
-  let obj := mkMd <| .Identifier objName
-  let fld := mkMd <| .Identifier fldName
-  let heapIn := mkMd <| .Identifier heapInName
-  let heapOut := mkMd <| .Identifier heapOutName
+  let obj := mkMd <| .Variable (.Local objName)
+  let fld := mkMd <| .Variable (.Local fldName)
+  let heapIn := mkMd <| .Variable (.Local heapInName)
+  let heapOut := mkMd <| .Variable (.Local heapOutName)
       -- Build the "obj is allocated" condition: Composite..ref($obj) < $heap_in.nextReference
   let heapCounter := mkMd <| .StaticCall "Heap..nextReference!" [heapIn]
   let objRef := mkMd <| .StaticCall "Composite..ref!" [obj]

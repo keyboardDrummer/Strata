@@ -43,10 +43,10 @@ resolved sub-trees (e.g. a procedure's parameters already have their IDs).
 - `Constant` — named constant
 
 ### Reference nodes (use a name)
-- `StmtExpr.Identifier` — variable reference
+- `StmtExpr.Variable (.Local _)` — variable reference
 - `StmtExpr.StaticCall` — static procedure call
 - `StmtExpr.InstanceCall` — instance method call
-- `StmtExpr.FieldSelect` — field access
+- `StmtExpr.Variable (.Field _ _)` — field access
 - `StmtExpr.New` — object creation (references a type)
 - `StmtExpr.Exit` — exit a labelled block
 - `HighType.UserDefined` — type reference
@@ -274,7 +274,7 @@ def resolveRef (name : Identifier) (source : Option FileRange := none)
 private def targetTypeName (target : StmtExprMd) : ResolveM (Option String) := do
   let s ← get
   match target.val with
-  | .Identifier ref =>
+  | .Variable (.Local ref) =>
     match s.scope.get? ref.text with
     | some (_, node) =>
       match node.getType.val with
@@ -352,6 +352,17 @@ def resolveHighType (ty : HighTypeMd) : ResolveM HighTypeMd := do
   | other => pure other
   return { val := val', source := ty.source }
 
+mutual
+def resolveVariable (parentSource : Option FileRange) (v : VariableMd) : ResolveM VariableMd := do
+  match v.val with
+  | .Local ref =>
+    let ref' ← resolveRef ref parentSource
+    pure ⟨.Local ref', v.source⟩
+  | .Field target fieldName =>
+    let target' ← resolveStmtExpr target
+    let fieldName' ← resolveFieldRef target' fieldName parentSource
+    pure ⟨.Field target' fieldName', v.source⟩
+
 def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
   match _: exprMd with
   | AstNode.mk expr source =>
@@ -384,17 +395,17 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
   | .LiteralBool v => pure (.LiteralBool v)
   | .LiteralString v => pure (.LiteralString v)
   | .LiteralDecimal v => pure (.LiteralDecimal v)
-  | .Identifier ref =>
+  | .Variable (.Local ref) =>
     let ref' ← resolveRef ref source
-    pure (.Identifier ref')
+    pure (.Variable (.Local ref'))
   | .Assign targets value =>
-    let targets' ← targets.mapM resolveStmtExpr
+    let targets' ← targets.mapM (resolveVariable source)
     let value' ← resolveStmtExpr value
     pure (.Assign targets' value')
-  | .FieldSelect target fieldName =>
+  | .Variable (.Field target fieldName) =>
     let target' ← resolveStmtExpr target
     let fieldName' ← resolveFieldRef target' fieldName source
-    pure (.FieldSelect target' fieldName')
+    pure (.Variable (.Field target' fieldName'))
   | .PureFieldUpdate target fieldName newVal =>
     let target' ← resolveStmtExpr target
     let fieldName' ← resolveFieldRef target' fieldName source
@@ -470,6 +481,7 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
   return { val := val', source := source }
   termination_by exprMd
   decreasing_by all_goals term_by_mem
+end
 
 /-- Resolve a parameter: assign a fresh ID and add to scope. -/
 def resolveParameter (param : Parameter) : ResolveM Parameter := do
@@ -649,11 +661,13 @@ private def collectStmtExpr (map : Std.HashMap Nat ResolvedNode) (expr : StmtExp
     let map := match dec with | some d => collectStmtExpr map d | none => map
     collectStmtExpr map body
   | .Return val => match val with | some v => collectStmtExpr map v | none => map
-  | .Identifier _ => map
+  | .Variable (.Local _) => map
+  | .Variable (.Field target _) => collectStmtExpr map target
   | .Assign targets value =>
-    let map := targets.foldl collectStmtExpr map
+    let map := targets.foldl (fun m t => match t.val with
+      | .Local _ => m
+      | .Field target _ => collectStmtExpr m target) map
     collectStmtExpr map value
-  | .FieldSelect target _ => collectStmtExpr map target
   | .PureFieldUpdate target _ newVal =>
     let map := collectStmtExpr map target
     collectStmtExpr map newVal

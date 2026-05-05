@@ -574,7 +574,7 @@ partial def translateExpr (ctx : TranslationContext) (e : Python.expr SourceRang
 
   -- Variable references
   | .Name _ name _ =>
-    return mkStmtExprMd (StmtExpr.Identifier name.val)
+    return mkStmtExprMd (StmtExpr.Variable (.Local name.val))
 
   -- Binary operations
   | .BinOp _ left op right => do
@@ -663,7 +663,7 @@ partial def translateExpr (ctx : TranslationContext) (e : Python.expr SourceRang
           let freshVar := s!"$cmp_tmp_{e.toAst.ann.start.byteIdx}_{i}"
           let varDecl := mkStmtExprMd (StmtExpr.LocalVariable freshVar AnyTy (some comp))
           tempDecls := tempDecls.push varDecl
-          operandRefs := operandRefs.push (mkStmtExprMd (StmtExpr.Identifier freshVar))
+          operandRefs := operandRefs.push (mkStmtExprMd (StmtExpr.Variable (.Local freshVar)))
         else
           operandRefs := operandRefs.push comp
       let ⟨hOpSize⟩ ← guardProp (p := operandRefs.size ≥ n + 1) "operandRefs size < n+1"
@@ -728,7 +728,7 @@ partial def translateExpr (ctx : TranslationContext) (e : Python.expr SourceRang
         let dict ← fields.foldlM (fun acc (fname, fty) =>
           return mkStmtExprMd (.StaticCall "DictStrAny_cons"
             [mkStmtExprMd (.LiteralString fname),
-             ← wrapFieldInAny fty (mkStmtExprMd (.FieldSelect inner fname)), acc]))
+             ← wrapFieldInAny fty (mkStmtExprMd (.Variable (.Field inner fname))), acc]))
           (mkStmtExprMd (.StaticCall "DictStrAny_empty" []))
         pure <| mkStmtExprMd (.StaticCall "from_ClassInstance"
           [mkStmtExprMd (.LiteralString ty), dict])
@@ -804,9 +804,9 @@ partial def translateExpr (ctx : TranslationContext) (e : Python.expr SourceRang
     | .Name _ name _ =>
       if name.val == "self" && ctx.currentClassName.isSome then
         -- self.field in a method - field type is Any (builtins) or Composite (classes)
-        let fieldExpr := mkStmtExprMd (StmtExpr.FieldSelect
-          (mkStmtExprMd (StmtExpr.Identifier "self"))
-          attr.val)
+        let fieldExpr := mkStmtExprMd (StmtExpr.Variable (.Field
+          (mkStmtExprMd (StmtExpr.Variable (.Local "self")))
+          attr.val))
         let className := ctx.currentClassName.get!
         match tryLookupFieldHighType ctx className attr.val with
         | some (.UserDefined _) =>
@@ -829,7 +829,7 @@ partial def translateExpr (ctx : TranslationContext) (e : Python.expr SourceRang
       else
         -- Regular object.field access
         let objExpr ← translateExpr ctx obj
-        let fieldExpr := mkStmtExprMd (StmtExpr.FieldSelect objExpr attr.val)
+        let fieldExpr := mkStmtExprMd (StmtExpr.Variable (.Field objExpr attr.val))
         let objType ← inferExprType ctx obj
         match tryLookupFieldHighType ctx objType attr.val with
           | some ty => wrapFieldInAny ty fieldExpr
@@ -837,7 +837,7 @@ partial def translateExpr (ctx : TranslationContext) (e : Python.expr SourceRang
     | _ =>
       -- Complex object expression - translate and access field
       let objExpr ← translateExpr ctx obj
-      let fieldExpr := mkStmtExprMd (StmtExpr.FieldSelect objExpr attr.val)
+      let fieldExpr := mkStmtExprMd (StmtExpr.Variable (.Field objExpr attr.val))
       let objType ← inferExprType ctx obj
       match tryLookupFieldHighType ctx objType attr.val with
         | some ty => wrapFieldInAny ty fieldExpr
@@ -1121,7 +1121,7 @@ partial def translateExprAsReceiver (ctx : TranslationContext)
     match tryLookupFieldHighType ctx objType fieldAttr.val with
     | some (.UserDefined _) =>
       let objExpr ← translateExprAsReceiver ctx obj
-      pure <| mkStmtExprMd (StmtExpr.FieldSelect objExpr fieldAttr.val)
+      pure <| mkStmtExprMd (StmtExpr.Variable (.Field objExpr fieldAttr.val))
     | _ => translateExpr ctx e
   | _ => translateExpr ctx e
 
@@ -1165,7 +1165,7 @@ partial def translateCall (ctx : TranslationContext)
       | .Attribute _ (.Name _ receiverName _) _ _ =>
         if receiverName.val ∈ ctx.variableTypes.unzip.1 then
           [mkStmtExprMd (StmtExpr.Assign
-            [mkStmtExprMd (StmtExpr.Identifier receiverName.val)]
+            [⟨.Local receiverName.val, none⟩]
             (mkStmtExprMd .Hole))]
         else []
       | _ => []
@@ -1175,7 +1175,7 @@ partial def translateCall (ctx : TranslationContext)
         | some (varName, ty) =>
           if ty == PyLauType.Any then
             [mkStmtExprMd (StmtExpr.Assign
-              [mkStmtExprMd (StmtExpr.Identifier varName)]
+              [⟨.Local varName, none⟩]
               (mkStmtExprMd (.Hole false none)))]
           else []
         | _ => []
@@ -1310,9 +1310,15 @@ def withException (ctx : TranslationContext) (funcname: String) : Bool :=
     | some sig => hasErrorOutput sig
     | none => false
 
-def freeVar (name: String) := mkStmtExprMd (.Identifier name)
-def maybeExceptVar := freeVar "maybe_except"
-def nullcall_var := freeVar "nullcall_ret"
+def freeVar (name: String) := mkStmtExprMd (.Variable (.Local name))
+def freeVarTarget (name: String) : VariableMd := ⟨.Local name, none⟩
+/-- Convert a StmtExprMd (expected to be a Variable) to a VariableMd for use as an assign target. -/
+def toVarTarget (e : StmtExprMd) : VariableMd :=
+  match e.val with
+  | .Variable v => ⟨v, e.source⟩
+  | _ => ⟨.Local { text := "_invalid_" }, e.source⟩
+def maybeExceptVar := freeVarTarget "maybe_except"
+def nullcall_var := freeVarTarget "nullcall_ret"
 
 partial def translateAssign  (ctx : TranslationContext)
                              (lhs: Python.expr SourceRange)
@@ -1362,7 +1368,7 @@ partial def translateAssign  (ctx : TranslationContext)
     match lhs with
     | .Name _ n _ =>
       if n.val ∈ ctx.variableTypes.unzip.1 then
-        let targetExpr := mkStmtExprMd (StmtExpr.Identifier n.val)
+        let targetExpr : VariableMd := ⟨.Local n.val, none⟩
         return (ctx, [mkStmtExprMd (StmtExpr.Assign [targetExpr] rhs_trans)] ++ exceptHavoc, true)
       else
         -- Use type annotation if it matches a known composite type
@@ -1381,14 +1387,14 @@ partial def translateAssign  (ctx : TranslationContext)
   let mut newctx := ctx
   match lhs with
     | .Name _ n _ =>
-        let targetExpr := mkStmtExprMd (StmtExpr.Identifier n.val)
+        let targetExpr : VariableMd := ⟨.Local n.val, none⟩
         let assignStmts := match rhs_trans.val with
         | .StaticCall fnname args =>
             if let some (ImportedSymbol.compositeType laurelName) := ctx.importedSymbols[fnname.text]? then
               let resolvedId := mkId laurelName
               let newExpr := mkStmtExprMd (StmtExpr.New resolvedId)
               let varType := mkHighTypeMd (.UserDefined resolvedId)
-              let selfRef := mkStmtExprMd (StmtExpr.Identifier n.val)
+              let selfRef := mkStmtExprMd (StmtExpr.Variable (.Local n.val))
               let initStmt := mkInstanceMethodCall laurelName "__init__" selfRef args source
               if n.val ∈ ctx.variableTypes.unzip.1 then
                 let assignStmt := mkStmtExprMdWithLoc (StmtExpr.Assign [targetExpr] newExpr) source
@@ -1437,7 +1443,7 @@ partial def translateAssign  (ctx : TranslationContext)
             let slices ← slices.mapM (translateExpr ctx)
             let source := sourceRangeToSource ctx.filePath lhs.toAst.ann
             let anySetsExpr := mkStmtExprMdWithLoc (StmtExpr.StaticCall "Any_sets!" [ListAny_mk slices, target, rhs_trans]) source
-            let assignStmts := [mkStmtExprMdWithLoc (StmtExpr.Assign [target] anySetsExpr) source]
+            let assignStmts := [mkStmtExprMdWithLoc (StmtExpr.Assign [toVarTarget target] anySetsExpr) source]
             return (ctx,assignStmts, false)
         | _ =>  throw (.internalError "Invalid Subscript Expr")
     | .Attribute _ obj attr _ =>
@@ -1445,9 +1451,9 @@ partial def translateAssign  (ctx : TranslationContext)
       | .Name _ name _ =>
         if name.val == "self" && ctx.currentClassName.isSome then
           -- self.field : type = value in a method
-          let fieldAccess := mkStmtExprMd (StmtExpr.FieldSelect
-            (mkStmtExprMd (StmtExpr.Identifier "self"))
-            attr.val)
+          let fieldAccess := mkStmtExprMd (StmtExpr.Variable (.Field
+            (mkStmtExprMd (StmtExpr.Variable (.Local "self")))
+            attr.val))
           -- When the annotation is a composite type, the RHS (which is Any)
           -- cannot be assigned directly; use New to initialize the field.
           let rhs' ← match annotation with
@@ -1457,11 +1463,11 @@ partial def translateAssign  (ctx : TranslationContext)
                 pure (mkStmtExprMd (StmtExpr.New (mkId laurelName)))
               else pure rhs_trans
             | none => pure rhs_trans
-          let assignStmt := mkStmtExprMdWithLoc (StmtExpr.Assign [fieldAccess] rhs') source
+          let assignStmt := mkStmtExprMdWithLoc (StmtExpr.Assign [toVarTarget fieldAccess] rhs') source
           return (ctx, [assignStmt], true)
         else
           let targetExpr ← translateExpr ctx lhs  -- This will handle self.field via translateExpr
-          let assignStmt := mkStmtExprMdWithLoc (StmtExpr.Assign [targetExpr] rhs_trans) source
+          let assignStmt := mkStmtExprMdWithLoc (StmtExpr.Assign [toVarTarget targetExpr] rhs_trans) source
           return (ctx, [assignStmt], true)
       | _ => throw (.unsupportedConstruct "Assignment targets not yet supported" (toString (repr lhs)))
     | _ => throw (.unsupportedConstruct "Assignment targets not yet supported" (toString (repr lhs)))
@@ -1590,7 +1596,7 @@ def getExceptionCheckPreamble (ctx : TranslationContext) (e : StmtExprMd) (varNa
     ([], e)
   else if containsUserCall ctx e then
     let varDecl := mkStmtExprMd (StmtExpr.LocalVariable varName AnyTy (some e))
-    let varRef := mkStmtExprMd (StmtExpr.Identifier varName)
+    let varRef := mkStmtExprMd (StmtExpr.Variable (.Local varName))
     ([varDecl, mkExceptionCheckAssert varRef "Check exception"], varRef)
   else
     (getExceptionAssertions ctx e, e)
@@ -1647,7 +1653,7 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
           let annStr := pyExprToString annotation
           match typeTester? annStr with
           | some testerName =>
-            let varExpr := mkStmtExprMd (StmtExpr.Identifier n.val)
+            let varExpr := mkStmtExprMd (StmtExpr.Variable (.Local n.val))
             let cond := mkStmtExprMd (StmtExpr.StaticCall testerName [varExpr])
             [mkStmtExprMdWithLoc (StmtExpr.Assert { condition := cond }) md]
           | none => []
@@ -1702,7 +1708,7 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
         let (preamble, eRef) := getExceptionCheckPreamble ctx e s!"$ret_exc_{expr.toAst.ann.start.byteIdx}"
         -- Coerce Composite return values to Any for LaurelResult : Any
         let eRef ← coerceToAny ctx expr eRef
-        let assign := mkStmtExprMdWithLoc (StmtExpr.Assign [mkStmtExprMd (StmtExpr.Identifier PyLauFuncReturnVar)] eRef) md
+        let assign := mkStmtExprMdWithLoc (StmtExpr.Assign [⟨.Local PyLauFuncReturnVar, none⟩] eRef) md
         .ok $ preamble ++ [assign, mkStmtExprMdWithLoc (StmtExpr.Exit "$body") md]
       | none => .ok [mkStmtExprMdWithLoc (StmtExpr.Exit "$body") md]
     return (ctx, stmts)
@@ -1721,7 +1727,7 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
         let freshVar := s!"assert_cond_{test.toAst.ann.start.byteIdx}"
         let varType := mkHighTypeMd .TBool
         let varDecl := mkStmtExprMd (StmtExpr.LocalVariable freshVar varType (some condExpr))
-        let varRef := mkStmtExprMd (StmtExpr.Identifier freshVar)
+        let varRef := mkStmtExprMd (StmtExpr.Variable (.Local freshVar))
         ([varDecl], varRef, { ctx with variableTypes := ctx.variableTypes ++ [(freshVar, "bool")] })
       | _ => ([], condExpr, ctx)
 
@@ -1791,8 +1797,7 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
     -- Insert exception checks after each statement in try body
     let bodyStmtsWithChecks := bodyStmts.flatMap fun stmt =>
       let isException := mkStmtExprMd (StmtExpr.StaticCall "isError"
-        [mkStmtExprMd (StmtExpr.Identifier "maybe_except")])
-      let exitToHandler := mkStmtExprMd (StmtExpr.IfThenElse isException
+        [mkStmtExprMd (StmtExpr.Variable (.Local "maybe_except"))])      let exitToHandler := mkStmtExprMd (StmtExpr.IfThenElse isException
         (mkStmtExprMd (StmtExpr.Exit catchersLabel)) none)
       [stmt, exitToHandler]
 
@@ -1830,7 +1835,7 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
         let mgrTy ← inferExprType currentCtx ctxExpr
         let mgrLauTy ← translateType currentCtx mgrTy
         let mgrDecl := mkStmtExprMd (StmtExpr.LocalVariable mgrName mgrLauTy (some mgrExpr))
-        let mgrRef := mkStmtExprMd (StmtExpr.Identifier mgrName)
+        let mgrRef := mkStmtExprMd (StmtExpr.Variable (.Local mgrName))
         currentCtx := {currentCtx with variableTypes := currentCtx.variableTypes ++ [(mgrName, mgrTy)]}
         let enterCall := mkInstanceMethodCall mgrTy "__enter__" mgrRef [] md
         let exitCall := mkInstanceMethodCall mgrTy "__exit__" mgrRef [] md
@@ -1839,7 +1844,7 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
           let varName := pyExprToString varExpr
           if varName ∈ currentCtx.variableTypes.unzip.fst then
             let assignStmt := mkStmtExprMd (StmtExpr.Assign
-              [mkStmtExprMd (StmtExpr.Identifier varName)] enterCall)
+              [⟨.Local varName, none⟩] enterCall)
             setupStmts := setupStmts ++ [mgrDecl, assignStmt]
           else
             -- New variable — declare outside the block so it's visible after
@@ -1879,7 +1884,7 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
       | .Block (_ :: _ :: _) _ =>
         let varName := s!"$for_iter_{iter.toAst.ann.start.byteIdx}"
         let varDecl := mkStmtExprMd (StmtExpr.LocalVariable varName AnyTy (some iterRaw))
-        let varRef  := mkStmtExprMd (StmtExpr.Identifier varName)
+        let varRef  := mkStmtExprMd (StmtExpr.Variable (.Local varName))
         ([varDecl], varRef)
       | _ => ([], iterRaw)
     if let .Call _ (.Name _ {val:= "range",..} _) _ _  := iter then
@@ -1907,7 +1912,7 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
     let (finalCtx, bodyStmts) ← translateStmtList bodyCtx body.val.toList
     let assumeStmts : List StmtExprMd ← do match target with
       | .Name _ n _ =>
-        let targetVar := mkStmtExprMd (StmtExpr.Identifier n.val)
+        let targetVar := mkStmtExprMd (StmtExpr.Variable (.Local n.val))
         let isAnyNone (s: StmtExprMd) := match s.val with
           | .StaticCall constructor _ => constructor == AnyConstructor.None | _ => false
         match iterExpr.val with
@@ -2150,7 +2155,7 @@ def renameInputParams (inputs : List Parameter) (exclude : String → Bool := fu
     let orig : String := p.name.text
     let prefixed : String := paramInputPrefix ++ orig
     mkStmtExprMd (StmtExpr.LocalVariable (mkId orig) p.type
-      (some (mkStmtExprMd (StmtExpr.Identifier prefixed))))
+      (some (mkStmtExprMd (StmtExpr.Variable (.Local prefixed))))
   (renamed, copies)
 
 /-- Translate a Python function body: collect all variable declarations, hoist them
@@ -2164,7 +2169,7 @@ def translateFunctionBody (ctx : TranslationContext) (kwargsName : Option String
     let nonSelfParams := inputs.filter (fun p => p.name.text != "self")
     let (_, paramCopies) := renameInputParams nonSelfParams
       (match kwargsName with | some kw => (· == kw) | none => fun _ => false)
-    let noneReturn := mkStmtExprMd (.Assign [mkStmtExprMd (.Identifier PyLauFuncReturnVar)] AnyNone)
+    let noneReturn := mkStmtExprMd (.Assign [⟨.Local PyLauFuncReturnVar, none⟩] AnyNone)
     let bodyStmts := noneReturn::paramCopies ++ bodyStmts
     let bodyStmts := (mkStmtExprMd (.LocalVariable "nullcall_ret" AnyTy (some AnyNone))) :: bodyStmts
     return (mkStmtExprMd (StmtExpr.Block bodyStmts none), newctx)

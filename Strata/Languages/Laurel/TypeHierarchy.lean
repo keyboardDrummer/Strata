@@ -122,7 +122,7 @@ Walk a StmtExpr AST and collect DiagnosticModel errors for diamond-inherited fie
 def validateDiamondFieldAccessesForStmtExpr (model : SemanticModel)
     (expr : StmtExprMd) : List DiagnosticModel :=
   match _h : expr.val with
-  | .FieldSelect target fieldName =>
+  | .Variable (.Field target fieldName) =>
     let targetErrors := validateDiamondFieldAccessesForStmtExpr model target
     let fieldError := match (computeExprType model target).val with
       | .UserDefined typeName =>
@@ -218,11 +218,11 @@ Lower `New name` to a block that:
 def lowerNew (name : Identifier) (source : Option FileRange) : THM StmtExprMd := do
   let heapVar : Identifier := "$heap"
   let freshVar ← freshVarName
-  let getCounter := mkMd (.StaticCall "Heap..nextReference!" [mkMd (.Identifier heapVar)])
+  let getCounter := mkMd (.StaticCall "Heap..nextReference!" [mkMd (.Variable (.Local heapVar))])
   let saveCounter := mkMd (.LocalVariable freshVar ⟨.TInt, none⟩ (some getCounter))
-  let newHeap := mkMd (.StaticCall "increment" [mkMd (.Identifier heapVar)])
-  let updateHeap := mkMd (.Assign [mkMd (.Identifier heapVar)] newHeap)
-  let compositeResult := mkMd (.StaticCall "MkComposite" [mkMd (.Identifier freshVar), mkMd (.StaticCall (name.text ++ "_TypeTag") [])])
+  let newHeap := mkMd (.StaticCall "increment" [mkMd (.Variable (.Local heapVar))])
+  let updateHeap := mkMd (.Assign [⟨.Local heapVar, none⟩] newHeap)
+  let compositeResult := mkMd (.StaticCall "MkComposite" [mkMd (.Variable (.Local freshVar)), mkMd (.StaticCall (name.text ++ "_TypeTag") [])])
   return { val := .Block [saveCounter, updateHeap, compositeResult] none, source := source }
 
 /-- Local rewrite of `IsType` and `New` nodes. Recursion is handled by `mapStmtExprM`. -/

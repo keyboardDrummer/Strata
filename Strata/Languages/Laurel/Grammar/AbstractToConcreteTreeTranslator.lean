@@ -77,6 +77,12 @@ private def operationName : Operation → String
   | .Gt => "gt" | .Geq => "ge" | .StrConcat => "strConcat"
 
 -- Internal-only: public because `partial` prevents `private` in this section
+mutual
+partial def variableToArg (v : VariableMd) : Arg :=
+  match v.val with
+  | .Local name => laurelOp "identifier" #[ident name.text]
+  | .Field target field => laurelOp "fieldAccess" #[stmtExprToArg target, ident field.text]
+
 partial def stmtExprToArg (s : StmtExprMd) : Arg :=
   stmtExprValToArg s.val
 where
@@ -90,7 +96,9 @@ where
     | .LiteralString s => laurelOp "string" #[.strlit sr s]
     | .Hole true _ => laurelOp "hole"
     | .Hole false _ => laurelOp "nondetHole"
-    | .Identifier name => laurelOp "identifier" #[ident name.text]
+    | .Variable (.Local name) => laurelOp "identifier" #[ident name.text]
+    | .Variable (.Field target field) =>
+      laurelOp "fieldAccess" #[stmtExprToArg target, ident field.text]
     | .Block stmts label =>
       let stmtArgs := stmts.map stmtExprToArg |>.toArray
       match label with
@@ -103,11 +111,9 @@ where
     | .Assign targets value =>
       -- Grammar only supports single-target assign; use first target or placeholder
       let targetArg := match targets with
-        | t :: _ => stmtExprToArg t
+        | t :: _ => variableToArg t
         | [] => laurelOp "identifier" #[ident "_"]
       laurelOp "assign" #[targetArg, stmtExprToArg value]
-    | .FieldSelect target field =>
-      laurelOp "fieldAccess" #[stmtExprToArg target, ident field.text]
     | .StaticCall callee args =>
       let calleeArg := laurelOp "identifier" #[ident callee.text]
       let argsArr := args.map stmtExprToArg |>.toArray
@@ -165,9 +171,10 @@ where
     | .PureFieldUpdate target field value =>
       -- Not directly in grammar; emit as assignment to field
       laurelOp "assign" #[
-        laurelOp "fieldAccess" #[stmtExprToArg target, ident field.text],
+        variableToArg ⟨.Field target field, none⟩,
         stmtExprToArg value
       ]
+end
 
 private def parameterToArg (p : Parameter) : Arg :=
   laurelOp "parameter" #[ident p.name.text, highTypeToArg p.type]
