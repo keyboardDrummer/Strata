@@ -12,6 +12,7 @@ import Strata.Languages.Laurel.EliminateReturnStatements
 import Strata.Languages.Laurel.EliminateValueReturns
 import Strata.Languages.Laurel.ConstrainedTypeElim
 import Strata.Languages.Laurel.ContractPass
+import Strata.Languages.Laurel.RemoveFunctionAssumptions
 import Strata.Languages.Laurel.TypeAliasElim
 import Strata.Languages.Core.Verifier
 import Strata.Util.Profile
@@ -191,6 +192,9 @@ private def runLaurelPasses (options : LaurelTranslateOptions) (program : Progra
 
   program := contractPass program
   emit "ContractPass" "laurel.st" program
+
+  program := removeFunctionAssumptions program
+  emit "RemoveFunctionAssumptions" "laurel.st" program
 
   -- Re-resolve after contractPass so the model includes the generated
   -- helper procedures ($pre, $post) and their isFunctional status.
