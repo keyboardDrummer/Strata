@@ -8,8 +8,10 @@ module
 public import Strata.Languages.Laurel.LaurelToCoreTranslator
 import Strata.Languages.Laurel.DesugarShortCircuit
 import Strata.Languages.Laurel.EliminateReturnsInExpression
+import Strata.Languages.Laurel.EliminateReturnStatements
 import Strata.Languages.Laurel.EliminateValueReturns
 import Strata.Languages.Laurel.ConstrainedTypeElim
+import Strata.Languages.Laurel.ContractPass
 import Strata.Languages.Laurel.TypeAliasElim
 import Strata.Languages.Core.Verifier
 import Strata.Util.Profile
@@ -183,6 +185,12 @@ private def runLaurelPasses (options : LaurelTranslateOptions) (program : Progra
       program := result.program
       model := result.model
     emit pass.name "laurel.st" program
+
+  program := eliminateReturnStatements program
+  emit "EliminateReturnStatements" "laurel.st" program
+
+  program := contractPass program
+  emit "ContractPass" "laurel.st" program
 
   return (program, model, allDiags, allStats)
 
