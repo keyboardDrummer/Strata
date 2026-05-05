@@ -341,8 +341,8 @@ where
             match hvm : vm.val with
             | .Local _ => pure vm
             | .Field target fieldName =>
-              have h1 : sizeOf target < sizeOf vm := Variable.sizeOf_field_target vm hvm
-              have h2 : sizeOf vm < sizeOf targets := List.sizeOf_lt_of_mem hmem
+              have _h1 : sizeOf target < sizeOf vm := Variable.sizeOf_field_target vm hvm
+              have _h2 : sizeOf vm < sizeOf targets := List.sizeOf_lt_of_mem hmem
               pure ⟨.Field (← recurse target) fieldName, vm.source⟩
           return ⟨ .Assign targets' (← recurse v), source ⟩
     | .PureFieldUpdate t f v => return ⟨ .PureFieldUpdate (← recurse t) f (← recurse v), source ⟩
