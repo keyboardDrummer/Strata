@@ -219,6 +219,13 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
     if let some coreProgram := coreProgramOption then
       emit "CoreProgram" "core.st" coreProgram
     let mut allDiagnostics := passDiags ++ translateState.diagnostics
+
+    if translateState.coreProgramHasSuperfluousErrors && allDiagnostics.isEmpty then
+      -- The program was suppressed but no diagnostics explain why — that's a bug.
+      allDiagnostics := allDiagnostics ++ [DiagnosticModel.fromMessage
+        "Core program was suppressed due to superfluous errors, but no diagnostics were emitted. This is a bug."
+        DiagnosticType.StrataBug]
+
     let coreProgramOption :=
       if translateState.coreProgramHasSuperfluousErrors then none else coreProgramOption
     return (coreProgramOption, allDiagnostics, program, stats)

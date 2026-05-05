@@ -167,13 +167,19 @@ private def transformProcBody (proc : Procedure) (info : ContractInfo) : Body :=
   | b => b
 
 /-- Generate temporary variable assignments for input arguments at a call site.
-    Returns (temp declarations+assignments, temp variable references). -/
+    Returns (temp declarations+assignments, temp variable references).
+    Uses the parameter types from the procedure's contract info so that
+    resolution can type-check the generated temporaries. -/
 private def mkTempAssignments (args : List StmtExprMd) (calleeName : String)
-    (src : Option FileRange) : List StmtExprMd × List StmtExprMd :=
+    (inputParams : List Parameter) (src : Option FileRange)
+    : List StmtExprMd × List StmtExprMd :=
   let indexed := args.zipIdx
   let decls := indexed.map fun (arg, i) =>
     let tempName := s!"${calleeName}$arg{i}"
-    let param : Parameter := { name := mkId tempName, type := { val := .Unknown, source := none } }
+    let paramType := match inputParams[i]? with
+      | some p => p.type
+      | none => { val := .Unknown, source := none }
+    let param : Parameter := { name := mkId tempName, type := paramType }
     ⟨StmtExpr.Assign [mkVarMd (.Declare param)] arg, src⟩
   let refs := indexed.map fun (_, i) =>
     let tempName := s!"${calleeName}$arg{i}"
@@ -196,7 +202,7 @@ private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
   | .Assign targets (.mk (.StaticCall callee args) callSrc) =>
     match contractInfoMap.get? callee.text with
     | some info =>
-      let (tempDecls, tempRefs) := mkTempAssignments args callee.text src
+      let (tempDecls, tempRefs) := mkTempAssignments args callee.text info.inputParams src
       let callWithTemps : StmtExprMd := ⟨.Assign targets ⟨.StaticCall callee tempRefs, callSrc⟩, src⟩
       let preAssert := if info.hasPreCondition
         then [mkWithSrc (.Assert { condition := mkCall info.preName tempRefs, summary := info.preSummary })] else []
@@ -213,7 +219,7 @@ private def rewriteStmt (contractInfoMap : Std.HashMap String ContractInfo)
   | .StaticCall callee args =>
     match contractInfoMap.get? callee.text with
     | some info =>
-      let (tempDecls, tempRefs) := mkTempAssignments args callee.text src
+      let (tempDecls, tempRefs) := mkTempAssignments args callee.text info.inputParams src
       let callWithTemps : StmtExprMd := mkWithSrc (.StaticCall callee tempRefs)
       let preAssert := if info.hasPreCondition
         then [mkWithSrc (.Assert { condition := mkCall info.preName tempRefs, summary := info.preSummary })] else []
