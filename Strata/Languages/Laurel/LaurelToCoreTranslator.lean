@@ -75,7 +75,7 @@ structure TranslateState where
 def emitDiagnostic (d : DiagnosticModel) : TranslateM Unit :=
   modify fun s => { s with diagnostics := s.diagnostics ++ [d] }
 
-private def invalidCoreType (source : Option FileRange := none) (reason : String := "Type could not be translated to Core (resolution error placeholder)") : TranslateM LMonoTy := do
+private def invalidCoreType (source : Option FileRange) (reason : String) : TranslateM LMonoTy := do
   modify fun s => { s with coreDiagnostics := s.coreDiagnostics ++
     [diagnosticFromSource source reason DiagnosticType.StrataBug] }
   return .tcons s!"LaurelResolutionErrorPlaceholder" []
@@ -109,7 +109,6 @@ def translateType (ty : HighTypeMd) : TranslateM LMonoTy := do
   | .MultiValuedExpr _ => invalidCoreType ty.source "MultiValuedExpr type encountered during Core translation"
   | .Unknown => invalidCoreType ty.source "Unknown type encountered during Core translation"
   | _ => do
-    emitDiagnostic (diagnosticFromSource ty.source "cannot translate type to Core: not supported yet" DiagnosticType.StrataBug)
     invalidCoreType ty.source s!"cannot translate type to Core: not supported yet"
 
 termination_by ty.val
