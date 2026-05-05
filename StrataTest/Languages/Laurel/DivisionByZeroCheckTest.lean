@@ -59,7 +59,7 @@ procedure callPureDivUnsafe(x: int)
 };
 "
 
-#guard_msgs(drop info, error) in
+#guard_msgs (drop info, error) in
 #eval testInputWithOffset "DivByZeroE2E" e2eProgram 22 processLaurelFile
 
 end Laurel
