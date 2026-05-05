@@ -130,7 +130,8 @@ def translateType (ty : HighTypeMd) : TranslateM LMonoTy := do
       return .tcons "Composite" []
   | .TCore s => return .tcons s []
   | .TReal => return LMonoTy.real
-  | .Unknown => invalidCoreType ty.source "Unknown type encountered during Core translation"
+  | .MultiValuedExpr _ => invalidCoreType
+  | .Unknown => invalidCoreType
   | _ => do
     emitDiagnostic (diagnosticFromSource ty.source "cannot translate type to Core: not supported yet" DiagnosticType.StrataBug)
     invalidCoreType ty.source s!"cannot translate type to Core: not supported yet"
@@ -704,7 +705,7 @@ def translateProcedureToFunction (options: LaurelTranslateOptions) (isRecursive:
   let body ← match proc.body with
     | .Transparent bodyExpr => some <$> translateExpr bodyExpr [] (isPureContext := true)
     | .Opaque _ (some bodyExpr) _ =>
-      emitDiagnostic (diagnosticFromSource proc.name.source "functions with postconditions are not yet supported")
+      emitDiagnostic (diagnosticFromSource proc.name.source s!"opaque function '{proc.name}' is not yet supported")
       some <$> translateExpr bodyExpr [] (isPureContext := true)
     | _ => pure none
   let f : Core.Function := {

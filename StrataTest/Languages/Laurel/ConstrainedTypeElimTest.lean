@@ -59,6 +59,7 @@ procedure test(n: int)
   return y
 };
 procedure $witness_nat()
+  opaque
 {
   var $witness: int := 0;
   assert nat$constraint($witness)
@@ -101,6 +102,7 @@ procedure test(b: bool)
   }
 };
 procedure $witness_pos()
+  opaque
 {
   var $witness: int := 1;
   assert pos$constraint($witness)
@@ -135,6 +137,7 @@ procedure f()
   assert x == 1
 };
 procedure $witness_posint()
+  opaque
 {
   var $witness: int := 1;
   assert posint$constraint($witness)

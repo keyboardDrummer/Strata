@@ -159,8 +159,10 @@ private def transformProcBody (proc : Procedure) (info : ContractInfo) : Body :=
     .Transparent ⟨.Block (preAssume ++ [body] ++ postAssert) none, body.source⟩
   | .Opaque _ (some impl) _ =>
     .Opaque [] (some ⟨.Block (preAssume ++ [impl] ++ postAssert) none, impl.source⟩) []
-  | .Opaque _ none _ | .Abstract _ =>
-    .Opaque [] (some ⟨ .Block [] none, none⟩) []
+  | .Opaque _ none mods =>
+    .Opaque [] none mods
+  | .Abstract _ =>
+    .Abstract []
   | b => b
 
 /-- Generate temporary variable assignments for input arguments at a call site.

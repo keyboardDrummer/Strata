@@ -42,7 +42,7 @@ procedure axiomDoesNotFireBecauseOfPattern(x: int)
   opaque
 {
   assert Q(x)
-//^^^^^^^^^^^ error: assertion could not be proved
+//^^^^^^^^^^^ error: assertion does not hold
 };
 
 function A(x: int, y: real): bool;
@@ -62,7 +62,7 @@ procedure invokeB(x: int, y :real)
   opaque
 {
   assert B(y)
-//^^^^^^^^^^^ error: assertion could not be proved
+//^^^^^^^^^^^ error: assertion does not hold
 };
 
 function R(x: int): bool;
@@ -70,7 +70,7 @@ procedure badPostcondition(x: int)
   invokeOn R(x)
   opaque
   ensures R(x)
-//        ^^^^ error: assertion could not be proved
+//        ^^^^ error: postcondition does not hold
 {
 };
 
