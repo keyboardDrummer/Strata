@@ -59,7 +59,6 @@ procedure test(n: int)
   return y
 };
 procedure $witness_nat()
-  opaque
 {
   var $witness: int := 0;
   assert nat$constraint($witness)
@@ -91,7 +90,6 @@ info: function pos$constraint(v: int): bool
   v > 0
 };
 procedure test(b: bool)
-  opaque
 {
   if b then {
     var x: int := 1;
@@ -103,7 +101,6 @@ procedure test(b: bool)
   }
 };
 procedure $witness_pos()
-  opaque
 {
   var $witness: int := 1;
   assert pos$constraint($witness)
@@ -119,7 +116,7 @@ procedure $witness_pos()
 -- The variable has no known value, only the type constraint is assumed.
 def uninitProgram : String := r"
 constrained posint = x: int where x > 0 witness 1
-procedure f() {
+procedure f() opaque {
   var x: posint;
   assert x == 1
 };
@@ -138,7 +135,6 @@ procedure f()
   assert x == 1
 };
 procedure $witness_posint()
-  opaque
 {
   var $witness: int := 1;
   assert posint$constraint($witness)
