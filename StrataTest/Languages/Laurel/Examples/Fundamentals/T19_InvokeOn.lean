@@ -17,7 +17,8 @@ function P(x: int): bool;
 function Q(x: int): bool;
 
 function assertP(x: int): int requires P(x);
-function needsPAndQsInvoke1(): int {
+
+procedure needsPAndQsInvoke1(): int opaque {
   assertP(3)
 };
 
@@ -26,7 +27,7 @@ procedure PAndQ(x: int)
   opaque
   ensures P(x) && Q(x);
 
-function needsPAndQsInvoke2(): int {
+procedure needsPAndQsInvoke2(): int opaque {
   assertP(3)
 };
 

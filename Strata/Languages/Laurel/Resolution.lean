@@ -223,7 +223,6 @@ private def freshId : ResolveM Nat := do
   set { s with nextId := id + 1 }
   return id
 
-
 /-- Like `defineName`, but reports a diagnostic if the name already exists in the current scope.
     Inserts an `.unresolved` node so subsequent references still resolve without cascading errors. -/
 def defineNameCheckDup (iden : Identifier) (node : ResolvedNode) (overrideResolutionName: Option String := none) : ResolveM Identifier := do
@@ -540,6 +539,10 @@ def resolveProcedure (proc : Procedure) : ResolveM Procedure := do
       let diag := diagnosticFromSource proc.name.source
         s!"transparent procedures are not yet supported. Add 'opaque' to make the procedure opaque"
       modify fun s => { s with errors := s.errors.push diag }
+    if proc.isFunctional && body'.hasPostconditions then
+      let diag := diagnosticFromSource proc.name.source
+        s!"functions with postconditions are not yet supported"
+      modify fun s => { s with errors := s.errors.push diag }
     let invokeOn' ← proc.invokeOn.mapM resolveStmtExpr
     return { name := procName', inputs := inputs', outputs := outputs',
              isFunctional := proc.isFunctional,
@@ -572,6 +575,10 @@ def resolveInstanceProcedure (typeName : Identifier) (proc : Procedure) : Resolv
     if !proc.isFunctional && body'.isTransparent then
       let diag := diagnosticFromSource proc.name.source
         s!"transparent procedures are not yet supported. Add 'opaque' to make the procedure opaque"
+      modify fun s => { s with errors := s.errors.push diag }
+    if proc.isFunctional && body'.hasPostconditions then
+      let diag := diagnosticFromSource proc.name.source
+        s!"functions with postconditions are not yet supported"
       modify fun s => { s with errors := s.errors.push diag }
     let invokeOn' ← proc.invokeOn.mapM resolveStmtExpr
     modify fun s => { s with instanceTypeName := savedInstType }

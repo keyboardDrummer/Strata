@@ -8,8 +8,11 @@ module
 public import Strata.Languages.Laurel.LaurelToCoreTranslator
 import Strata.Languages.Laurel.DesugarShortCircuit
 import Strata.Languages.Laurel.EliminateReturnsInExpression
+import Strata.Languages.Laurel.EliminateReturnStatements
 import Strata.Languages.Laurel.EliminateValueReturns
 import Strata.Languages.Laurel.ConstrainedTypeElim
+import Strata.Languages.Laurel.ContractPass
+import Strata.Languages.Laurel.RemoveFunctionAssumptions
 import Strata.Languages.Laurel.TypeAliasElim
 import Strata.Languages.Core.Verifier
 import Strata.Util.Profile
@@ -184,6 +187,21 @@ private def runLaurelPasses (options : LaurelTranslateOptions) (program : Progra
       model := result.model
     emit pass.name "laurel.st" program
 
+  program := eliminateReturnStatements program
+  emit "EliminateReturnStatements" "laurel.st" program
+
+  program := contractPass program
+  emit "ContractPass" "laurel.st" program
+
+  program := removeFunctionAssumptions program
+  emit "RemoveFunctionAssumptions" "laurel.st" program
+
+  -- Re-resolve after contractPass so the model includes the generated
+  -- helper procedures ($pre, $post) and their isFunctional status.
+  let contractResult := resolve program (some model)
+  program := contractResult.program
+  model := contractResult.model
+
   return (program, model, allDiags, allStats)
 
 /--
@@ -211,8 +229,13 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
     if let some coreProgram := coreProgramOption then
       emit "CoreProgram" "core.st" coreProgram
     let mut allDiagnostics := passDiags ++ translateState.diagnostics
+
+    if translateState.coreDiagnostics.length > 0 && allDiagnostics.isEmpty then
+      -- The program was suppressed but no diagnostics explain why — report the core diagnostics.
+      allDiagnostics := allDiagnostics ++ translateState.coreDiagnostics
+
     let coreProgramOption :=
-      if translateState.coreProgramHasSuperfluousErrors then none else coreProgramOption
+      if !translateState.coreDiagnostics.isEmpty then none else coreProgramOption
     return (coreProgramOption, allDiagnostics, program, stats)
 
 /--
