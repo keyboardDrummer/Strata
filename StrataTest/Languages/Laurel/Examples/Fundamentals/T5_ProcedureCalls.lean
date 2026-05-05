@@ -38,7 +38,7 @@ procedure fooProof()
   var x: int := fooReassign();
   var y: int := fooSingleAssign()
 // The following assertions fails while it should succeed,
-// because Core does not yet support transparent procedures
+// because Core does not yet support transparent statement bodies
 //  assert x == y;
 };
 

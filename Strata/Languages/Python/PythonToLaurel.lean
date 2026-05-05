@@ -194,6 +194,8 @@ def mkCoreType (s: String): HighTypeMd :=
 def mkStmtExprMd (expr : StmtExpr) : StmtExprMd :=
   { val := expr, source := none }
 
+/-- A wildcard modifies list, meaning the procedure may modify anything. -/
+def wildcardModifies : List StmtExprMd := [mkStmtExprMd .All]
 /-- Create a VariableMd with default metadata -/
 def mkVariableMd (v : Variable) : VariableMd :=
   { val := v, source := none }
@@ -203,9 +205,6 @@ def stmtExprToVar (e : StmtExprMd) : Except TranslationError VariableMd :=
   match e.val with
   | .Var v => .ok { val := v, source := e.source }
   | _ => .error (.internalError "stmtExprToVar: expected Var node")
-
-/-- A wildcard modifies list, meaning the procedure may modify anything. -/
-def wildcardModifies : List StmtExprMd := [mkStmtExprMd .All]
 
 /-- Create a StmtExprMd with source location metadata. -/
 def mkStmtExprMdWithLoc (expr : StmtExpr) (source : Option FileRange) : StmtExprMd :=
@@ -2337,6 +2336,73 @@ def extractClassFields (ctx : TranslationContext) (classBody : Array (Python.stm
 
   return fields
 
+/-- Translate a Python method to a Laurel instance procedure -/
+def translateMethod (ctx : TranslationContext) (className : String)
+    (methodStmt : Python.stmt SourceRange)
+    : Except TranslationError Procedure := do
+  match methodStmt with
+  | .FunctionDef _ name args body _ _ret _ _ => do
+    let methodName := name.val
+
+    -- First parameter is self (typed as Composite to match call-site convention)
+    let selfParam : Parameter := {
+      name := "self"
+      type := mkHighTypeMd (.UserDefined (mkId className))
+    }
+
+    -- Translate remaining parameters (all typed as Any to match the
+    -- Python→Laurel pipeline's Any-wrapping convention for call sites).
+    let mut inputs : List Parameter := [selfParam]
+    match args with
+    | .mk_arguments _ _ argsList _ _ _ _ _ =>
+      -- Skip first arg (self), process rest
+      if argsList.val.size > 0 then
+        for arg in argsList.val.toList.tail! do
+          match arg with
+          | .mk_arg _ paramName _paramAnnotation _ =>
+            inputs := inputs ++ [{name := paramName.val, type := AnyTy}]
+    let mut kwargsName : Option String := none
+    match args with
+      | .mk_arguments _ _ _ _ _ _ kwargs _ =>
+          match kwargs.val with
+          | some (.mk_arg _ name _ _ ) =>
+            inputs:= inputs ++ [{ name := name.val, type := mkCoreType PyLauType.DictStrAny }]
+            kwargsName := some name.val
+          | _ => pure ()
+
+    -- Translate return type
+    -- All methods return Any (void methods return Any via from_None)
+    let outputs : List Parameter := [{name := "LaurelResult", type := AnyTy}]
+
+    -- Translate method body with class context
+    -- Add method parameters to variableTypes so that hoisting (e.g. in
+    -- try/except) does not re-declare them as local variables.
+    let paramTypes : List (String × String) := inputs.map fun p =>
+      if p.name.text == "self" then (p.name.text, className) else (p.name.text, PyLauType.Any)
+    let ctxWithClass := {ctx with currentClassName := some className,
+                                  variableTypes := paramTypes}
+    let newDecls := collectDeclaredNamesAndTypes ctxWithClass body.val.toList
+    let (varDecls, ctxWithClass) ←  createVarDeclStmtsAndCtx ctxWithClass newDecls
+    let (_, bodyStmts) ← translateStmtList ctxWithClass body.val.toList
+    let bodyStmts := prependExceptHandlingHelper (varDecls ++ bodyStmts)
+    let (renamedInputs, paramCopies) := renameInputParams inputs
+      (fun n => n == "self" || kwargsName == some n)
+    let bodyStmts := paramCopies ++ bodyStmts
+    let bodyBlock := mkStmtExprMd (StmtExpr.Block bodyStmts none)
+
+    let source := sourceRangeToSource ctx.filePath methodStmt.ann
+    return {
+      name := { text := manglePythonMethod className methodName, source := source }
+      inputs := renamedInputs
+      outputs := outputs
+      preconditions := [{ condition := mkStmtExprMd (StmtExpr.LiteralBool true) }]
+      isFunctional := false
+      decreases := none
+      body := .Opaque [] (some bodyBlock) wildcardModifies
+    }
+  | _ => throw (.internalError "Expected FunctionDef for method")
+
+
 /-- Extract fields from __init__ method body by scanning for self.field : type = expr patterns -/
 def extractFieldsFromInit (ctx : TranslationContext) (initBody : Array (Python.stmt SourceRange))
     : Except TranslationError (List Field) := do
@@ -2515,10 +2581,13 @@ def translateClass (ctx : TranslationContext) (classStmt : Python.stmt SourceRan
     -- and the resolution pass may not handle all constructs in method bodies.
     let inHierarchy := ctx.classesInHierarchy.contains className
     let mut instanceProcedures : Array Procedure := #[]
-
-    for (funcDecl, sr,  funcBody) in classFunDeclsAndBody do
-      let (proc, _) ← translateFunction ctx sr funcDecl $ if inHierarchy then none else funcBody
-      instanceProcedures := instanceProcedures.push proc
+    for stmt in body do
+      if let .FunctionDef .. := stmt then
+        let proc ← translateMethod ctx className stmt
+        if inHierarchy then
+          instanceProcedures := instanceProcedures.push { proc with body := .Opaque [] .none wildcardModifies }
+        else
+          instanceProcedures := instanceProcedures.push proc
     -- Add synthesized default __init__ if needed
     if let some initProc := defaultInitProc then
       instanceProcedures := instanceProcedures.push initProc

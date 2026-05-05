@@ -23,6 +23,7 @@ namespace Strata.Laurel
 
 def blockStmtLiftingProgram : String := r"
 procedure assertInBlockExpr()
+  opaque
 {
   var x: int := 0;
   var y: int := { assert x == 0; x := 1; x };
@@ -40,11 +41,23 @@ def parseLaurelAndLift (input : String) : IO Program := do
   | .ok program =>
     let result := resolve program
     let (program, model) := (result.program, result.model)
-    pure (liftExpressionAssignments model program)
+    let imperativeCallees := program.staticProcedures.filter (fun p => !p.isFunctional)
+      |>.map (fun p => p.name.text)
+    pure (liftExpressionAssignments program model imperativeCallees)
 
 /--
 info: procedure assertInBlockExpr()
-{ var x: int := 0; assert x == 0; var $x_0: int := x; x := 1; var y: int := { x }; assert y == 1 };
+  opaque
+{
+  var x: int := 0;
+  assert x == 0;
+  var $x_0: int := x;
+  x := 1;
+  var y: int := {
+    x
+  };
+  assert y == 1
+};
 -/
 #guard_msgs in
 #eval! do

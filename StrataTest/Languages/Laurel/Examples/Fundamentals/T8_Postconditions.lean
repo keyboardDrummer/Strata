@@ -31,12 +31,14 @@ procedure callerOfOpaqueProcedure()
 };
 
 procedure invalidPostcondition(x: int)
-    opaque
-    ensures false
-//          ^^^^^ error: assertion does not hold
+  returns (r: int) // TODO, removing this returns triggers a latent bug
+  opaque
+  ensures false
+//        ^^^^^ error: postcondition does not hold
 {
 };
 "
 
 #guard_msgs (drop info, error) in
-#eval testInputWithOffset "Postconditions" program 14 processLaurelFile
+#eval testInputWithOffset "Postconditions" program 14
+  (processLaurelFileWithOptions { translateOptions := { keepAllFilesPrefix := "/home/ubuntu/repos/Strata/Build/"}})

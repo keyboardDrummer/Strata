@@ -23,7 +23,9 @@ namespace Strata.Laurel
 
 def testProgram : String := r"
 constrained nat = x: int where x >= 0 witness 0
-procedure test(n: nat) returns (r: nat) {
+procedure test(n: nat) returns (r: nat)
+  opaque
+{
   assert r >= 0;
   var y: nat := n;
   return y
@@ -44,15 +46,26 @@ def parseLaurelAndElim (input : String) : IO Program := do
 
 /--
 info: function nat$constraint(x: int): bool
-{ x >= 0 };
+{
+  x >= 0
+};
 procedure test(n: int)
   returns (r: int)
   requires nat$constraint(n)
   opaque
   ensures nat$constraint(r)
-{ assert r >= 0; var y: int := n; assert nat$constraint(y); return y };
+{
+  assert r >= 0;
+  var y: int := n;
+  assert nat$constraint(y);
+  return y
+};
 procedure $witness_nat()
-{ var $witness: int := 0; assert nat$constraint($witness) };
+  opaque
+{
+  var $witness: int := 0;
+  assert nat$constraint($witness)
+};
 -/
 #guard_msgs in
 #eval! do
@@ -63,7 +76,9 @@ procedure $witness_nat()
 -- Scope management: constrained variable in if-branch must not leak into sibling block
 def scopeProgram : String := r"
 constrained pos = v: int where v > 0 witness 1
-procedure test(b: bool) {
+procedure test(b: bool)
+  opaque
+{
   if b then {
     var x: pos := 1
   };
@@ -76,11 +91,27 @@ procedure test(b: bool) {
 
 /--
 info: function pos$constraint(v: int): bool
-{ v > 0 };
+{
+  v > 0
+};
 procedure test(b: bool)
-{ if b then { var x: int := 1; assert pos$constraint(x) }; { var x: int := -5; x := -10 } };
+  opaque
+{
+  if b then {
+    var x: int := 1;
+    assert pos$constraint(x)
+  };
+  {
+    var x: int := -5;
+    x := -10
+  }
+};
 procedure $witness_pos()
-{ var $witness: int := 1; assert pos$constraint($witness) };
+  opaque
+{
+  var $witness: int := 1;
+  assert pos$constraint($witness)
+};
 -/
 #guard_msgs in
 #eval! do
@@ -92,7 +123,9 @@ procedure $witness_pos()
 -- The variable has no known value, only the type constraint is assumed.
 def uninitProgram : String := r"
 constrained posint = x: int where x > 0 witness 1
-procedure f() {
+procedure f()
+  opaque
+{
   var x: posint;
   assert x == 1
 };
@@ -100,11 +133,22 @@ procedure f() {
 
 /--
 info: function posint$constraint(x: int): bool
-{ x > 0 };
+{
+  x > 0
+};
 procedure f()
-{ var x: int; assume posint$constraint(x); assert x == 1 };
+  opaque
+{
+  var x: int;
+  assume posint$constraint(x);
+  assert x == 1
+};
 procedure $witness_posint()
-{ var $witness: int := 1; assert posint$constraint($witness) };
+  opaque
+{
+  var $witness: int := 1;
+  assert posint$constraint($witness)
+};
 -/
 #guard_msgs in
 #eval! do

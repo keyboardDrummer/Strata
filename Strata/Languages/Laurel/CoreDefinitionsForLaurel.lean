@@ -27,6 +27,7 @@ program Laurel;
 
 datatype LaurelResolutionErrorPlaceholder {}
 datatype Float64IsNotSupportedYet {}
+datatype LaurelUnit { MkLaurelUnit() }
 
 // The types for these Map functions are incorrect.
 // We'll fix them when Laurel supports polymorphism

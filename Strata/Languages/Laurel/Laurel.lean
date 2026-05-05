@@ -200,6 +200,9 @@ structure Procedure : Type where
       whose body is the ensures clause universally quantified over the procedure's inputs,
       with this expression as the SMT trigger. -/
   invokeOn : Option (AstNode StmtExpr) := none
+  /-- Axioms to emit alongside this procedure. Populated by the contract pass from
+      `invokeOn` and ensures clauses. -/
+  axioms : List (AstNode StmtExpr) := []
 
 /--
 A typed parameter for a procedure.
@@ -219,6 +222,11 @@ structure Condition where
   condition : AstNode StmtExpr
   /-- Optional human-readable summary describing the property being checked. -/
   summary : Option String := none
+  /-- When `true`, this condition is *free*: assumed but not checked.
+      A free precondition is assumed by the implementation but not asserted at
+      call sites. A free postcondition is assumed upon return from calls but
+      not checked on exit from implementations. -/
+  free : Bool := false
 
 /--
 The body of a procedure. A body can be transparent (with a visible

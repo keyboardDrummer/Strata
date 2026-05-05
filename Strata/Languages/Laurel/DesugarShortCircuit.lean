@@ -26,7 +26,7 @@ public section
 private def bare (v : StmtExpr) : StmtExprMd := ⟨v, none⟩
 
 /-- Local rewrite of a single short-circuit node. Recursion is handled by `mapStmtExpr`. -/
-private def desugarShortCircuitNode (model : SemanticModel) (expr : StmtExprMd) : StmtExprMd :=
+private def desugarShortCircuitNode (imperativeCallees : List String) (expr : StmtExprMd) : StmtExprMd :=
   let source := expr.source
   match expr.val with
   | .PrimitiveOp op args =>
@@ -35,12 +35,12 @@ private def desugarShortCircuitNode (model : SemanticModel) (expr : StmtExprMd) 
     -- short-circuits converted to IfThenElse). The check still works because
     -- `containsAssignmentOrImperativeCall` recurses into IfThenElse.
     | .AndThen, [a, b] | .Implies, [a, b] =>
-      if containsAssignmentOrImperativeCall model b then
+      if containsAssignmentOrImperativeCall imperativeCallees b then
         let elseVal := match op with | .AndThen => false | _ => true
         ⟨.IfThenElse a b (some (bare (.LiteralBool elseVal))), source⟩
       else expr
     | .OrElse, [a, b] =>
-      if containsAssignmentOrImperativeCall model b then
+      if containsAssignmentOrImperativeCall imperativeCallees b then
         ⟨.IfThenElse a (bare (.LiteralBool true)) (some b), source⟩
       else expr
     | _, _ => expr
@@ -48,7 +48,9 @@ private def desugarShortCircuitNode (model : SemanticModel) (expr : StmtExprMd) 
 
 /-- Desugar short-circuit operators in a program. -/
 def desugarShortCircuit (model : SemanticModel) (program : Program) : Program :=
-  mapProgram (mapStmtExpr (desugarShortCircuitNode model)) program
+  let imperativeCallees := program.staticProcedures.filter (fun p => !p.isFunctional)
+    |>.map (fun p => p.name.text)
+  mapProgram (mapStmtExpr (desugarShortCircuitNode imperativeCallees)) program
 
 end -- public section
 end Strata.Laurel

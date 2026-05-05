@@ -164,8 +164,15 @@ structure SemanticModel where
 
 def SemanticModel.get (model: SemanticModel) (iden: Identifier): ResolvedNode :=
   match iden.uniqueId with
-  | some key => (model.refToDef.get? key).getD default
-  | none => default
+  | some key =>
+    match model.refToDef.get? key with
+    | some node => node
+    | none =>
+      -- An ID was assigned during Phase 1 but the reference was never registered in
+      -- Phase 2 (buildRefToDef). This is a bug in the resolution pass itself.
+      dbg_trace s!"SOUND BUG: identifier '{iden.text}' (id={key}) has a uniqueId but is missing from refToDef"
+      .unresolved iden.source
+  | none => .unresolved iden.source
 
 def SemanticModel.isFunction (model: SemanticModel) (id: Identifier): Bool :=
   match model.get id with
@@ -222,7 +229,6 @@ private def freshId : ResolveM Nat := do
   let id := s.nextId
   set { s with nextId := id + 1 }
   return id
-
 
 /-- Like `defineName`, but reports a diagnostic if the name already exists in the current scope.
     Inserts an `.unresolved` node so subsequent references still resolve without cascading errors. -/
@@ -486,9 +492,9 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
   | .Fresh val =>
     let val' ← resolveStmtExpr val
     pure (.Fresh val')
-  | .Assert ⟨condExpr, summary⟩ =>
+  | .Assert ⟨condExpr, summary, free⟩ =>
     let cond' ← resolveStmtExpr condExpr
-    pure (.Assert { condition := cond', summary })
+    pure (.Assert { condition := cond', summary, free })
   | .Assume cond =>
     let cond' ← resolveStmtExpr cond
     pure (.Assume cond')
@@ -541,15 +547,13 @@ def resolveProcedure (proc : Procedure) : ResolveM Procedure := do
     let pres' ← proc.preconditions.mapM (·.mapM resolveStmtExpr)
     let dec' ← proc.decreases.mapM resolveStmtExpr
     let body' ← resolveBody proc.body
-    if !proc.isFunctional && body'.isTransparent then
-      let diag := diagnosticFromSource proc.name.source
-        s!"transparent procedures are not yet supported. Add 'opaque' to make the procedure opaque"
-      modify fun s => { s with errors := s.errors.push diag }
     let invokeOn' ← proc.invokeOn.mapM resolveStmtExpr
+    let axioms' ← proc.axioms.mapM resolveStmtExpr
     return { name := procName', inputs := inputs', outputs := outputs',
              isFunctional := proc.isFunctional,
              preconditions := pres', decreases := dec',
              invokeOn := invokeOn',
+             axioms := axioms',
              body := body' }
 
 /-- Resolve a field: define its name under the qualified key (OwnerType.fieldName) and resolve its type. -/
@@ -574,16 +578,18 @@ def resolveInstanceProcedure (typeName : Identifier) (proc : Procedure) : Resolv
     let pres' ← proc.preconditions.mapM (·.mapM resolveStmtExpr)
     let dec' ← proc.decreases.mapM resolveStmtExpr
     let body' ← resolveBody proc.body
-    if !proc.isFunctional && body'.isTransparent then
+    if !proc.isFunctional && body'.isTransparent && !proc.name.text.any (· == '$') then
       let diag := diagnosticFromSource proc.name.source
-        s!"transparent procedures are not yet supported. Add 'opaque' to make the procedure opaque"
+        s!"transparent statement bodies are not supported. Add 'opaque' to make the procedure opaque"
       modify fun s => { s with errors := s.errors.push diag }
     let invokeOn' ← proc.invokeOn.mapM resolveStmtExpr
     modify fun s => { s with instanceTypeName := savedInstType }
+    let axioms' ← proc.axioms.mapM resolveStmtExpr
     return { name := procName', inputs := inputs', outputs := outputs',
              isFunctional := proc.isFunctional,
              preconditions := pres', decreases := dec',
              invokeOn := invokeOn',
+             axioms := axioms',
              body := body' }
 
 /-- Resolve a type definition. -/
@@ -734,7 +740,7 @@ private def collectStmtExpr (map : Std.HashMap Nat ResolvedNode) (expr : StmtExp
   | .Assigned name => collectStmtExpr map name
   | .Old val => collectStmtExpr map val
   | .Fresh val => collectStmtExpr map val
-  | .Assert ⟨cond, _⟩ => collectStmtExpr map cond
+  | .Assert ⟨cond, _, _⟩ => collectStmtExpr map cond
   | .Assume cond => collectStmtExpr map cond
   | .ProveBy val proof =>
     let map := collectStmtExpr map val
@@ -861,8 +867,18 @@ private def preRegisterTopLevel (program : Program) : ResolveM Unit := do
 
 /-- Run the full resolution pass on a Laurel program. -/
 def resolve (program : Program) (existingModel: Option SemanticModel := none) : ResolutionResult :=
+
   -- Phase 1: pre-register all top-level names, then assign IDs and resolve references
   let phase1 : ResolveM Program := do
+
+    for td in program.types do
+      if let .Composite ct := td then
+        for proc in ct.instanceProcedures do
+          let diag := diagnosticFromSource proc.name.source
+            s!"Instance procedure '{proc.name.text}' on composite type '{ct.name.text}' is not yet supported"
+            DiagnosticType.NotYetImplemented
+          modify fun s => { s with errors := s.errors.push diag }
+
     preRegisterTopLevel program
     let types' ← program.types.mapM resolveTypeDefinition
     let constants' ← program.constants.mapM resolveConstant

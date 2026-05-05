@@ -84,7 +84,7 @@ def collectExpr (expr : StmtExpr) : StateM AnalysisResult Unit := do
   | .Assigned n => collectExprMd n
   | .Old v => collectExprMd v
   | .Fresh v => collectExprMd v
-  | .Assert ⟨c, _⟩ => collectExprMd c
+  | .Assert ⟨c, _, _⟩ => collectExprMd c
   | .Assume c => collectExprMd c
   | .ProveBy v p => collectExprMd v; collectExprMd p
   | .ContractOf _ f => collectExprMd f
@@ -317,7 +317,11 @@ where
               let isLast := idx == n - 1
               let s' ← recurse s (isLast && valueUsed)
               let rest' ← processStmts (idx + 1) rest
-              pure (s' :: rest')
+              -- Flatten unlabeled blocks returned by recurse so that
+              -- Declare targets remain in the enclosing scope.
+              match s'.val with
+              | .Block innerStmts none => pure (innerStmts ++ rest')
+              | _ => pure (s' :: rest')
           termination_by sizeOf remaining
         let stmts' ← processStmts 0 stmts
         return ⟨ .Block stmts' label, source ⟩
@@ -428,8 +432,8 @@ where
     | .Assigned n => return ⟨ .Assigned (← recurse n), source ⟩
     | .Old v => return ⟨ .Old (← recurse v), source ⟩
     | .Fresh v => return ⟨ .Fresh (← recurse v), source ⟩
-    | .Assert ⟨condExpr, summary⟩ =>
-        return ⟨ .Assert { condition := ← recurse condExpr, summary }, source ⟩
+    | .Assert ⟨condExpr, summary, free⟩ =>
+        return ⟨ .Assert { condition := ← recurse condExpr, summary, free }, source ⟩
     | .Assume c => return ⟨ .Assume (← recurse c), source ⟩
     | .ProveBy v p => return ⟨ .ProveBy (← recurse v) (← recurse p), source ⟩
     | .ContractOf ty f => return ⟨ .ContractOf ty (← recurse f), source ⟩

@@ -54,12 +54,12 @@ procedure callPureDivUnsafe(x: int)
   opaque
 {
   var z: int := pureDiv(10, x)
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion does not hold
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion could not be proved
 // Error ranges are too wide because Core does not use expression locations
 };
 "
 
 #guard_msgs(drop info, error) in
-#eval testInputWithOffset "DivByZeroE2E" e2eProgram 22 processLaurelFile
+#eval testInputWithOffset "DivByZeroE2E" e2eProgram 20 processLaurelFile
 
 end Laurel

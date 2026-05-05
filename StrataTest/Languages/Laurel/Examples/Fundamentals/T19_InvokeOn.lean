@@ -69,7 +69,7 @@ procedure badPostcondition(x: int)
   invokeOn R(x)
   opaque
   ensures R(x)
-//        ^^^^ error: assertion could not be proved
+//        ^^^^ error: postcondition could not be proved
 {
 };
 
@@ -77,6 +77,6 @@ procedure badPostcondition(x: int)
 
 #guard_msgs (drop info, error) in
 #eval testInputWithOffset "InvokeOn" program 14
-  (Strata.Laurel.processLaurelFileWithOptions { verifyOptions := { Core.VerifyOptions.default with solver := "z3" } })
+  (Strata.Laurel.processLaurelFileWithOptions { Core.VerifyOptions.default with solver := "z3" })
 
 end Strata.Laurel

@@ -67,20 +67,17 @@ procedure updatesAndAliasing()
   assert dAlias#intValue == d#intValue
 };
 
-procedure subsequentHeapMutations(c: Container)
-  opaque
-  modifies c
-{
+procedure subsequentHeapMutations() opaque {
+  var c: Container := new Container;
+
   // The additional parenthesis on the next line are needed to let the parser succeed. Joe, any idea why this is needed?
   var sum: int := ((c#intValue := 1) + c#intValue) + (c#intValue := 2);
   assert sum == 4
 };
 
-procedure implicitEquality(c: Container, d: Container)
-  opaque
-  modifies c
-  modifies d
-{
+procedure implicitEquality() opaque {
+  var c: Container := new Container;
+  var d: Container := new Container;
   c#intValue := 1;
   d#intValue := 2;
   if c#intValue == d#intValue then {
@@ -101,11 +98,9 @@ composite SameFieldName {
   var intValue: bool
 }
 
-procedure sameFieldNameDifferentType(a: Container, b: SameFieldName)
-  opaque
-  modifies a
-  modifies b
-{
+procedure sameFieldNameDifferentType() opaque {
+  var a: Container := new Container;
+  var b: SameFieldName := new SameFieldName;
   a#intValue := 1;
   b#intValue := true;
 
@@ -124,9 +119,7 @@ composite Pixel {
   var color: Color
 }
 
-procedure datatypeField()
-  opaque
-{
+procedure datatypeField() opaque {
   var p: Pixel := new Pixel;
   p#color := Red();
   assert Color..isRed(p#color);

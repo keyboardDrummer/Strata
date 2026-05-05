@@ -32,7 +32,7 @@ procedure outputValid(): nat
 
 // Output constraint — invalid return fails
 procedure outputInvalid(): nat
-//                         ^^^ error: assertion does not hold
+//                         ^^^ error: postcondition does not hold
   opaque
 {
   return -1
@@ -88,7 +88,7 @@ procedure argInvalid() returns (r: int)
   opaque
 {
   var x: int := takesNat(-1);
-//^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition does not hold
+//^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion does not hold
   return x
 };
 
@@ -159,9 +159,7 @@ procedure uninitNotWitness()
 
 // Quantifier constraint injection — forall
 // n + 1 > 0 is only provable with n >= 0 injected; false for all int
-procedure forallNat()
-  opaque
-{
+procedure forallNat() opaque {
   var b: bool := forall(n: nat) => n + 1 > 0;
   assert b
 };
@@ -169,9 +167,7 @@ procedure forallNat()
 // Quantifier constraint injection — exists
 // n == -1 is satisfiable for int, but not when n >= 0 is required
 // n == 42 works because 42 >= 0
-procedure existsNat()
-  opaque
-{
+procedure existsNat() opaque {
   var b: bool := exists(n: nat) => n == 42;
   assert b
 };

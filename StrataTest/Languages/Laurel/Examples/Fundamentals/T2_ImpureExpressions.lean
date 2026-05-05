@@ -80,7 +80,6 @@ procedure nestedImpureStatementsAndOpaque()
 // An imperative procedure call in expression position is lifted before the
 // surrounding expression is evaluated.
 procedure imperativeProc(x: int) returns (r: int)
-   // ensures clause required because Core's symbolic verification does not support transparent proceduces yet
   opaque
   ensures r == x + 1
 {
@@ -150,7 +149,8 @@ procedure addProcCaller(): int
 "
 
 #guard_msgs (error, drop all) in
-#eval! testInputWithOffset "NestedImpureStatements" program 14 processLaurelFile
+#eval! testInputWithOffset "NestedImpureStatements" program 14
+  (processLaurelFileWithOptions { translateOptions := { keepAllFilesPrefix := "/home/ubuntu/repos/Strata/Build/"}})
 
 
 end Laurel
