@@ -324,6 +324,7 @@ jobs:
 
   strata-benchmarks:
     name: Run internal benchmarks of Strata
+    if: github.repository == 'strata-org/Strata'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -342,7 +343,7 @@ jobs:
           BUILD_ID=$(aws codebuild start-build \
             --project-name strata-benchmarks \
             --source-type-override GITHUB \
-            --source-location-override ${{ github.server_url }}/${{ github.repository }}.git \
+            --source-location-override https://github.com/strata-org/Strata.git \
             --source-version ${{ github.event.pull_request.head.sha || github.sha }} \
             --query 'build.id' --output text \
             --region us-east-2)
