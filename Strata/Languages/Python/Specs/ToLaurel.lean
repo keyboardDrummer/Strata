@@ -414,17 +414,18 @@ def buildSpecBody (allArgs : Array Arg)
     (returnType : SpecType)
     (source : Option FileRange)
     (ctx : SpecExprContext)
-    : ToLaurelM Body := do
+    : ToLaurelM (List Condition × Body) := do
   let fileSource ← mkFileSource
   let mut stmts : Array StmtExprMd := #[]
+  let mut preconds : Array Condition := #[]
   -- 1. Havoc the result: result := Hole(nondet)
   let holeExpr : StmtExprMd := { val := .Hole (deterministic := false), source := source }
-  let resultId : StmtExprMd := { val := .Identifier (mkId "result"), source := source }
+  let resultId : AstNode Variable := { val := Variable.Local (mkId "result"), source := source }
   let assignStmt ← mkStmtWithLoc (.Assign [resultId] holeExpr) default
   stmts := stmts.push assignStmt
   -- 2. Assert type / required-param preconditions
   for arg in allArgs do
-    let paramId : StmtExprMd := { val := .Identifier (mkId arg.name), source := source }
+    let paramId : StmtExprMd := { val := .Var $ Variable.Local (mkId arg.name), source := source }
     match ← typeAssertion? arg.type paramId source with
     | some assertion =>
       if arg.default.isSome then
@@ -451,6 +452,7 @@ def buildSpecBody (allArgs : Array Arg)
     let (⟨condType, condExpr⟩, success) ← runChecked <| specExprToLaurel assertion.formula source ctx
     if success then
       if let .TBool := condType then
+        preconds := preconds.push { condition := condExpr.stmt, summary := some msg }
         let assertStmt ← mkStmtWithLoc (.Assert { condition := condExpr.stmt, summary := some msg }) default
         stmts := stmts.push assertStmt
       else
@@ -471,7 +473,7 @@ def buildSpecBody (allArgs : Array Arg)
   -- NOTE. Skip NoneType: generated stubs currently declare `-> None` even for methods
   -- that return values. Assuming isfrom_None would make callers unreachable.
   if returnType.asIdent != some .noneType then
-    let resultRef : StmtExprMd := { val := .Identifier (mkId "result"), source := source }
+    let resultRef : StmtExprMd := { val := .Var $ Variable.Local (mkId "result"), source := source }
     if let some retAssertion ← typeAssertion? returnType resultRef source then
       let assumeStmt ← mkStmtWithLoc (.Assume retAssertion) default
       stmts := stmts.push assumeStmt
@@ -479,7 +481,7 @@ def buildSpecBody (allArgs : Array Arg)
       val := .Block stmts.toList none,
       source := fileSource
   }
-  return .Transparent body
+  return (preconds.toList, .Opaque [] (some body) [{ val := .All, source := none }])
 
 /-! ## Declaration Translation -/
 
@@ -519,14 +521,14 @@ def funcDeclToLaurel (procName : String) (func : FunctionDecl)
     inputs.foldl (init := ({} : Std.HashMap String HighType).insert "result" Laurel.tyAny) fun m p =>
       m.insert p.name.text p.type.val
   let specCtx : SpecExprContext := { procName, argTypes }
-  let body ← buildSpecBody allArgs func.preconditions func.postconditions
+  let (preconds, body) ← buildSpecBody allArgs func.preconditions func.postconditions
     func.returnType none specCtx
   let src ← mkSourceWithFileRange func.loc
   return {
     name := { text := procName, source := src }
     inputs := inputs.toList
     outputs := outputs
-    preconditions := []
+    preconditions := preconds
     decreases := none
     isFunctional := false
     body := body

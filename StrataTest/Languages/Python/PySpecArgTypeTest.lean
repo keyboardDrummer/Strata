@@ -95,7 +95,14 @@ preconditions redundant. -/
 
 /--
 info: procedure typed_func(x: Any, y: Any): Any
-{ result := <??>; assert Any..isfrom_int(x); assert Any..isfrom_str(y); assume Any..isfrom_float(result) };
+  opaque
+  modifies *
+{
+  result := <??>;
+  assert Any..isfrom_int(x);
+  assert Any..isfrom_str(y);
+  assume Any..isfrom_float(result)
+};
 -/
 #guard_msgs in
 #eval! do

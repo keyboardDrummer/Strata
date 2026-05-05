@@ -18,16 +18,19 @@ procedure hasRequires(x: int) returns (r: int)
 // Call elimination reports precondition errors at the call site,
 // not at the requires clause definition.
 //
+  opaque
 {
   assert x > 0;
   assert x > 3;
-//^^^^^^^^^^^^ error: assertion does not hold
+//^^^^^^^^^^^^ error: assertion could not be proved
   x + 1
 };
 
-procedure caller() {
+procedure caller()
+  opaque
+{
   var x: int := hasRequires(1);
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition does not hold
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion could not be proved
   var y: int := hasRequires(3)
 };
 
@@ -37,23 +40,28 @@ function aFunctionWithPrecondition(x: int): int
   x
 };
 
-procedure aFunctionWithPreconditionCaller() {
+procedure aFunctionWithPreconditionCaller()
+  opaque
+{
   var x: int := aFunctionWithPrecondition(0)
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion does not hold
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion could not be proved
 // Error ranges are too wide because Core does not use expression locations
 };
 
 procedure multipleRequires(x: int, y: int) returns (r: int)
   requires x > 0
   requires y > 0
+  opaque
 {
   x + y
 };
 
-procedure multipleRequiresCaller() {
+procedure multipleRequiresCaller()
+  opaque
+{
   var a: int := multipleRequires(1, 2);
   var b: int := multipleRequires(-1, 2)
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition does not hold
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion could not be proved
 };
 
 function funcMultipleRequires(x: int, y: int): int
@@ -63,10 +71,12 @@ function funcMultipleRequires(x: int, y: int): int
   x + y
 };
 
-procedure funcMultipleRequiresCaller() {
+procedure funcMultipleRequiresCaller()
+  opaque
+{
   var a: int := funcMultipleRequires(1, 2);
   var b: int := funcMultipleRequires(1, -1)
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion does not hold
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion could not be proved
 };
 "
 

@@ -162,6 +162,9 @@ inductive HighType : Type where
   Any type can be assigned to unknown and unknown can be assigned to any type.
   The unknown type can not be represented in Core so its occurence will abort compilation before evaluating Core -/
   | Unknown
+  /-- A multi-valued expression type, returned by procedure calls with multiple outputs.
+  Used by the resolution pass to validate that the LHS of an assignment has the correct number of targets. -/
+  | MultiValuedExpr (types : List (AstNode HighType))
   deriving Repr
 
 /-- Whether a quantifier is universal or existential. -/
@@ -197,6 +200,9 @@ structure Procedure : Type where
       whose body is the ensures clause universally quantified over the procedure's inputs,
       with this expression as the SMT trigger. -/
   invokeOn : Option (AstNode StmtExpr) := none
+  /-- Axioms to emit alongside this procedure. Populated by the contract pass from
+      `invokeOn` and ensures clauses. -/
+  axioms : List (AstNode StmtExpr) := []
 
 /--
 A typed parameter for a procedure.
@@ -216,6 +222,11 @@ structure Condition where
   condition : AstNode StmtExpr
   /-- Optional human-readable summary describing the property being checked. -/
   summary : Option String := none
+  /-- When `true`, this condition is *free*: assumed but not checked.
+      A free precondition is assumed by the implementation but not asserted at
+      call sites. A free postcondition is assumed upon return from calls but
+      not checked on exit from implementations. -/
+  free : Bool := false
 
 /--
 The body of a procedure. A body can be transparent (with a visible
@@ -236,6 +247,17 @@ inductive Body where
   | External
 
 /--
+A variable reference or declaration: a local variable, a field access on an expression, or a local variable declaration.
+-/
+inductive Variable : Type where
+  /-- A local variable reference by name. -/
+  | Local (name : Identifier)
+  /-- Read a field from a target expression. Combined with `Assign` for field writes. -/
+  | Field (target : AstNode StmtExpr) (fieldName : Identifier)
+  /-- A local variable declaration with a name and type. -/
+  | Declare (parameter : Parameter)
+
+/--
 The unified statement-expression type for Laurel programs.
 
 `StmtExpr` contains both statement-like constructs (conditionals, loops,
@@ -248,8 +270,6 @@ inductive StmtExpr : Type where
   | IfThenElse (cond : AstNode StmtExpr) (thenBranch : AstNode StmtExpr) (elseBranch : Option (AstNode StmtExpr))
   /-- A sequence of statements with an optional label for `Exit`. -/
   | Block (statements : List (AstNode StmtExpr)) (label : Option String)
-  /-- A local variable declaration with a type and optional initializer. The initializer must be set if this `StmtExpr` is pure. -/
-  | LocalVariable (name : Identifier) (type : AstNode HighType) (initializer : Option (AstNode StmtExpr))
   /-- A while loop with a condition, invariants, optional termination measure, and body. Only allowed in impure contexts. -/
   | While (cond : AstNode StmtExpr) (invariants : List (AstNode StmtExpr))
     (decreases : Option (AstNode StmtExpr))
@@ -266,12 +286,12 @@ inductive StmtExpr : Type where
   | LiteralString (value : String)
   /-- A decimal literal. -/
   | LiteralDecimal (value : Decimal)
-  /-- A variable reference by name. -/
-  | Identifier (name : Identifier)
-  /-- Assignment to one or more targets. Multiple targets are only allowed when the value is a `StaticCall` to a procedure with multiple outputs. -/
-  | Assign (targets : List (AstNode StmtExpr)) (value : AstNode StmtExpr)
-  /-- Read a field from a target expression. Combined with `Assign` for field writes. -/
-  | FieldSelect (target : AstNode StmtExpr) (fieldName : Identifier)
+  /-- A variable reference or declaration. When `var` is `Variable.Local`, this is a reference
+      that evaluates to the variable's value. When `var` is `Variable.Declare`, this is a
+      declaration without an initializer (used as a standalone statement in a block). -/
+  | Var (var : Variable)
+  /-- Assignment to one or more targets. Multiple targets are only supported with identifier targets and a call as the RHS. -/
+  | Assign (targets : List (AstNode Variable)) (value : AstNode StmtExpr)
   /-- Update a field on a pure (value) type, producing a new value. -/
   | PureFieldUpdate (target : AstNode StmtExpr) (fieldName : Identifier) (newValue : AstNode StmtExpr)
   /-- Call a static procedure by name with the given arguments. -/
@@ -280,7 +300,7 @@ inductive StmtExpr : Type where
   | PrimitiveOp (operator : Operation) (arguments : List (AstNode StmtExpr))
   /-- Create new object (`new`). -/
   | New (ref : Identifier)
-  /-- Identifier to the current object (`this`/`self`). -/
+  /-- Reference to the current object (`this`/`self`). -/
   | This
   /-- Reference equality test between two expressions. -/
   | ReferenceEquals (lhs : AstNode StmtExpr) (rhs : AstNode StmtExpr)
@@ -324,6 +344,7 @@ end
 
 @[expose] abbrev HighTypeMd := AstNode HighType
 @[expose] abbrev StmtExprMd := AstNode StmtExpr
+@[expose] abbrev VariableMd := AstNode Variable
 
 theorem AstNode.sizeOf_val_lt {t : Type} [SizeOf t] (e : AstNode t) : sizeOf e.val < sizeOf e := by
   cases e; grind
@@ -361,8 +382,11 @@ def diagnosticFromSource (source : Option FileRange) (msg : String) (type : Diag
 instance : Inhabited StmtExpr where
   default := .Hole
 
+instance : Inhabited (AstNode Variable) where
+  default := { val := .Local default, source := none }
+
 instance : Inhabited HighTypeMd where
-  default := { val := HighType.Unknown, source := none }
+  default := { val := HighType.Unknown, source := some { file := .file "HighTypeMd default", range := default} }
 
 instance : Inhabited StmtExprMd where
   default := { val := default, source := none }
@@ -386,11 +410,14 @@ def highEq (a : HighTypeMd) (b : HighTypeMd) : Bool := match _a: a.val, _b: b.va
   | HighType.Intersection ts1, HighType.Intersection ts2 =>
       ts1.length == ts2.length && (ts1.attach.zip ts2 |>.all (fun (t1, t2) => highEq t1.1 t2))
   | HighType.Unknown, HighType.Unknown => true
+  | HighType.MultiValuedExpr ts1, HighType.MultiValuedExpr ts2 =>
+      ts1.length == ts2.length && (ts1.attach.zip ts2 |>.all (fun (t1, t2) => highEq t1.1 t2))
   | _, _ => false
   termination_by (SizeOf.sizeOf a)
   decreasing_by
     all_goals (cases a; cases b; try term_by_mem)
     . cases a1; term_by_mem
+    . cases t1; term_by_mem
     . cases t1; term_by_mem
 
 instance : BEq HighTypeMd where

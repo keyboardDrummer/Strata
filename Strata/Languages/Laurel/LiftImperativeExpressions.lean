@@ -82,6 +82,8 @@ structure LiftState where
   condCounter : Nat := 0
   /-- All procedures in the program, used to look up return types of imperative calls -/
   procedures : List Procedure := []
+  /-- Names of callees whose calls should be treated as imperative (lifted) -/
+  imperativeCallees : List String := []
 
 @[expose] abbrev LiftM := StateM LiftState
 
@@ -102,7 +104,7 @@ private def freshTempFor (varName : Identifier) : LiftM Identifier := do
 private def freshCondVar : LiftM Identifier := do
   let n := (← get).condCounter
   modify fun s => { s with condCounter := n + 1 }
-  return s!"$c_{n}"
+  return s!"$cndtn_{n}"
 
 private def prepend (stmt : StmtExprMd) : LiftM Unit :=
   modify fun s => { s with prependedStmts := stmt :: s.prependedStmts }
@@ -111,24 +113,16 @@ private def onlyKeepSideEffectStmtsAndLast (stmts : List StmtExprMd) : LiftM (Li
   match stmts with
   | [] => return []
   | _ =>
+    -- return stmts
     let last := stmts.getLast!
     let nonLast ← stmts.dropLast.flatMapM (fun s =>
       match s.val with
-      | .LocalVariable .. => do
-          -- This addPrepend is a hack to work around Core not having let expressions
-          -- Otherwise we could keep them in the block
-          prepend s
-          pure []
-      | .Assert _ => do
-          -- Hack to work around Core not supporting assert expressions
-          -- Otherwise we could keep them in the block
-          prepend s
-          pure []
-      | .Assume _ => do
-          -- Hack to work around Core not supporting assume expressions
-          -- Otherwise we could keep them in the block
-          prepend s
-          pure []
+      | .Var (.Declare ..) | .Assign ([⟨.Declare .., _⟩]) _ => do
+          pure [s]
+      -- | .Assert _ => do
+      --     pure [s]
+      -- | .Assume _ => do
+      --     pure [s]
 
       /-
       Any other impure StmtExpr, like .Assign, .Exit or .Return,
@@ -158,26 +152,52 @@ private def computeType (expr : StmtExprMd) : LiftM HighTypeMd := do
   return computeExprType s.model expr
 
 /-- Check if an expression contains any assignments or imperative calls (recursively). -/
-def containsAssignmentOrImperativeCall (model: SemanticModel) (expr : StmtExprMd) : Bool :=
+def containsAssignmentOrImperativeCall (imperativeCallees : List String) (expr : StmtExprMd) : Bool :=
   match expr with
   | AstNode.mk val _ =>
   match val with
   | .Assign .. => true
   | .StaticCall name args1 =>
-    (match model.get name with
-    | .staticProcedure proc => !proc.isFunctional
-    | _ => false) ||
-      args1.attach.any (fun x => containsAssignmentOrImperativeCall model x.val)
-  | .PrimitiveOp _ args2 => args2.attach.any (fun x => containsAssignmentOrImperativeCall model x.val)
-  | .Block stmts _ => stmts.attach.any (fun x => containsAssignmentOrImperativeCall model x.val)
+    imperativeCallees.contains name.text ||
+      args1.attach.any (fun x => containsAssignmentOrImperativeCall imperativeCallees x.val)
+  | .PrimitiveOp _ args2 => args2.attach.any (fun x => containsAssignmentOrImperativeCall imperativeCallees x.val)
+  | .Block stmts _ => stmts.attach.any (fun x => containsAssignmentOrImperativeCall imperativeCallees x.val)
   | .IfThenElse cond th el =>
-      containsAssignmentOrImperativeCall model cond ||
-      containsAssignmentOrImperativeCall model th ||
-      match el with | some e => containsAssignmentOrImperativeCall model e | none => false
+      containsAssignmentOrImperativeCall imperativeCallees cond ||
+      containsAssignmentOrImperativeCall imperativeCallees th ||
+      match el with | some e => containsAssignmentOrImperativeCall imperativeCallees e | none => false
+  | .Assume cond => containsAssignmentOrImperativeCall imperativeCallees cond
+  | .Assert cond => containsAssignmentOrImperativeCall imperativeCallees cond.condition
+  | .InstanceCall target _ args =>
+      containsAssignmentOrImperativeCall imperativeCallees target ||
+      args.attach.any (fun x => containsAssignmentOrImperativeCall imperativeCallees x.val)
+  | .Quantifier _ _ trigger body =>
+      containsAssignmentOrImperativeCall imperativeCallees body ||
+      match trigger with | some t => containsAssignmentOrImperativeCall imperativeCallees t | none => false
+  | .Old value => containsAssignmentOrImperativeCall imperativeCallees value
+  | .Fresh value => containsAssignmentOrImperativeCall imperativeCallees value
+  | .ProveBy value proof =>
+      containsAssignmentOrImperativeCall imperativeCallees value ||
+      containsAssignmentOrImperativeCall imperativeCallees proof
+  | .ReferenceEquals lhs rhs =>
+      containsAssignmentOrImperativeCall imperativeCallees lhs ||
+      containsAssignmentOrImperativeCall imperativeCallees rhs
+  | .PureFieldUpdate target _ newValue =>
+      containsAssignmentOrImperativeCall imperativeCallees target ||
+      containsAssignmentOrImperativeCall imperativeCallees newValue
+  | .AsType target _ => containsAssignmentOrImperativeCall imperativeCallees target
+  | .IsType target _ => containsAssignmentOrImperativeCall imperativeCallees target
+  | .Assigned name => containsAssignmentOrImperativeCall imperativeCallees name
+  | .ContractOf _ func => containsAssignmentOrImperativeCall imperativeCallees func
+  | .Return (some v) => containsAssignmentOrImperativeCall imperativeCallees v
   | _ => false
   termination_by expr
   decreasing_by
-    all_goals ((try cases x); simp_all; try term_by_mem)
+    all_goals (try cases x)
+    all_goals (try simp_all)
+    all_goals (try have := Condition.sizeOf_condition_lt ‹_›)
+    all_goals (try term_by_mem)
+    all_goals omega
 
 /-- Check if an expression contains any nondeterministic holes (recursively). -/
 private def containsNondetHole (expr : StmtExprMd) : Bool :=
@@ -201,18 +221,18 @@ Shared logic for lifting an assignment in expression position:
 prepends the assignment, creates before-snapshots for all targets,
 and updates substitutions. The value should already be transformed by the caller.
 -/
-private def liftAssignExpr (targets : List StmtExprMd) (seqValue : StmtExprMd)
+private def liftAssignExpr (targets : List VariableMd) (seqValue : StmtExprMd)
     (source : Option FileRange) : LiftM Unit := do
   -- Prepend the assignment itself
   prepend (⟨.Assign targets seqValue, source⟩)
   -- Create a before-snapshot for each target and update substitutions
   for target in targets do
     match target.val with
-    | .Identifier varName =>
+    | .Local varName =>
         let snapshotName ← freshTempFor varName
-        let varType ← computeType target
+        let varType ← computeType (bare (.Var (.Local varName)))
         -- Snapshot goes before the assignment (cons pushes to front)
-        prepend (⟨.LocalVariable snapshotName varType (some (⟨.Identifier varName, source⟩)), source⟩)
+        prepend (⟨.Assign [⟨.Declare ⟨snapshotName, varType⟩, source⟩] (⟨.Var (.Local varName), source⟩), source⟩)
         setSubst varName snapshotName
     | _ => pure ()
 
@@ -225,16 +245,16 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
   match expr with
   | AstNode.mk val source =>
   match val with
-  | .Identifier name =>
-      return ⟨.Identifier (← getSubst name), source⟩
+  | .Var (.Local name) =>
+      return ⟨.Var (.Local (← getSubst name)), source⟩
 
   | .LiteralInt _ | .LiteralBool _ | .LiteralString _ | .LiteralDecimal _ => return expr
 
   | .Hole false (some holeType) =>
       -- Nondeterministic typed hole: lift to a fresh variable with no initializer (havoc)
       let holeVar ← freshCondVar
-      prepend (bare (.LocalVariable holeVar holeType none))
-      return bare (.Identifier holeVar)
+      prepend (bare (.Var (.Declare ⟨holeVar, holeType⟩)))
+      return bare (.Var (.Local holeVar))
 
   | .Assign targets value =>
       -- The expression result is the current substitution for the first target
@@ -244,7 +264,14 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         | _ => return expr
 
       let resultExpr ← match firstTarget.val with
-        | .Identifier varName => pure (⟨.Identifier (← getSubst varName), source⟩)
+        | .Local varName => pure (⟨.Var (.Local (← getSubst varName)), source⟩)
+        | .Declare param =>
+          -- Declaration with initializer: check if substitution exists
+          let hasSubst := (← get).subst.lookup param.name |>.isSome
+          if hasSubst then
+            pure (⟨.Var (.Local (← getSubst param.name)), source⟩)
+          else
+            return expr
         | _ =>
           dbg_trace "Strata bug: non-identifier targets should have been removed before the lift expression phase";
           return expr
@@ -261,27 +288,27 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       return ⟨.PrimitiveOp op seqArgs.reverse, source⟩
 
   | .StaticCall callee args =>
-    let model := (← get).model
+    let imperativeCallees := (← get).imperativeCallees
     let seqArgs ← args.reverse.mapM transformExpr
     let seqCall := ⟨.StaticCall callee seqArgs.reverse, source⟩
-    if model.isFunction callee then
+    if !imperativeCallees.contains callee.text then
       return seqCall
     else
       -- Imperative call in expression position: lift it like an assignment
       let callResultVar ← freshCondVar
       let callResultType ← computeType expr
       let liftedCall := [
-        ⟨ (.LocalVariable callResultVar callResultType none), source⟩,
-        ⟨.Assign [bare (.Identifier callResultVar)] seqCall, source⟩
+        ⟨ (.Var (.Declare ⟨callResultVar, callResultType⟩)), source ⟩,
+        ⟨.Assign [⟨ .Local callResultVar, source⟩] seqCall, source⟩
       ]
       modify fun s => { s with prependedStmts := s.prependedStmts ++ liftedCall}
-      return bare (.Identifier callResultVar)
+      return bare (.Var (.Local callResultVar))
 
   | .IfThenElse cond thenBranch elseBranch =>
-      let model :=  (← get).model
-      let thenHasAssign := containsAssignmentOrImperativeCall model thenBranch
+      let imperativeCallees := (← get).imperativeCallees
+      let thenHasAssign := containsAssignmentOrImperativeCall imperativeCallees thenBranch
       let elseHasAssign := match elseBranch with
-        | some e => containsAssignmentOrImperativeCall model e
+        | some e => containsAssignmentOrImperativeCall imperativeCallees e
         | none => false
       if thenHasAssign || elseHasAssign then
         -- Lift the entire if-then-else. Introduce a fresh variable for the result.
@@ -294,14 +321,14 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         modify fun s => { s with prependedStmts := [], subst := [] }
         let seqThen ← transformExpr thenBranch
         let thenPrepends ← takePrepends
-        let thenBlock := bare (.Block (thenPrepends ++ [⟨.Assign [bare (.Identifier condVar)] seqThen, source⟩]) none)
+        let thenBlock := bare (.Block (thenPrepends ++ [⟨.Assign [⟨ .Local condVar, source⟩] seqThen, source⟩]) none)
         -- Process else-branch from scratch
         modify fun s => { s with prependedStmts := [], subst := [] }
         let seqElse ← match elseBranch with
           | some e => do
               let se ← transformExpr e
               let elsePrepends ← takePrepends
-              pure (some (bare (.Block (elsePrepends ++ [⟨.Assign [bare (.Identifier condVar)] se, source⟩]) none)))
+              pure (some (bare (.Block (elsePrepends ++ [⟨.Assign [⟨ .Local condVar, source⟩] se, source⟩]) none)))
           | none => pure none
         -- Restore outer state
         modify fun s => { s with subst := savedSubst, prependedStmts := savedPrepends }
@@ -312,8 +339,8 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         -- IfThenElse added first (cons puts it deeper), then declaration (cons puts it on top)
         -- Output order: declaration, then if-then-else
         prepend (⟨.IfThenElse seqCond thenBlock seqElse, source⟩)
-        prepend (bare (.LocalVariable condVar condType none))
-        return bare (.Identifier condVar)
+        prepend (bare (.Var (.Declare ⟨condVar, condType⟩)))
+        return bare (.Var (.Local condVar))
       else
         -- No assignments in branches — recurse normally
         let seqCond ← transformExpr cond
@@ -327,26 +354,96 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       let newStmts := (← stmts.reverse.mapM transformExpr).reverse
       return ⟨ .Block (← onlyKeepSideEffectStmtsAndLast newStmts) labelOption, source⟩
 
-  | .LocalVariable name ty initializer =>
+  | .Var (.Declare param) =>
       -- If the substitution map has an entry for this variable, it was
       -- assigned to the right and we need to lift this declaration so it
       -- appears before the snapshot that references it.
-      let hasSubst := (← get).subst.lookup name |>.isSome
+      let hasSubst := (← get).subst.lookup param.name |>.isSome
       if hasSubst then
-        match initializer with
-        | some initExpr =>
-            let seqInit ← transformExpr initExpr
-            prepend (⟨.LocalVariable name ty (some seqInit), expr.source⟩)
-        | none =>
-            prepend (⟨.LocalVariable name ty none, expr.source⟩)
-        return ⟨.Identifier (← getSubst name), expr.source⟩
+        prepend (⟨.Var (.Declare param), expr.source⟩)
+        return ⟨.Var (.Local (← getSubst param.name)), expr.source⟩
       else
         return expr
+
+  | .Assume cond =>
+      let seqCond ← transformExpr cond
+      prepend ⟨.Assume seqCond, source⟩
+      default
+
+  | .Assert cond =>
+      let seqCondExpr ← transformExpr cond.condition
+      prepend ⟨.Assert { cond with condition := seqCondExpr }, source⟩
+      default
+
+  | .Return (some retExpr) =>
+      let seqRet ← transformExpr retExpr
+      return ⟨.Return (some seqRet), source⟩
+
+  | .While cond invs dec body =>
+      let seqCond ← transformExpr cond
+      let seqInvs ← invs.mapM transformExpr
+      let seqDec ← match dec with
+        | some d => pure (some (← transformExpr d))
+        | none => pure none
+      let seqBody ← transformExpr body
+      return ⟨.While seqCond seqInvs seqDec seqBody, source⟩
+
+  | .PureFieldUpdate target fieldName newValue =>
+      let seqTarget ← transformExpr target
+      let seqNewValue ← transformExpr newValue
+      return ⟨.PureFieldUpdate seqTarget fieldName seqNewValue, source⟩
+
+  | .ReferenceEquals lhs rhs =>
+      let seqRhs ← transformExpr rhs
+      let seqLhs ← transformExpr lhs
+      return ⟨.ReferenceEquals seqLhs seqRhs, source⟩
+
+  | .AsType target ty =>
+      let seqTarget ← transformExpr target
+      return ⟨.AsType seqTarget ty, source⟩
+
+  | .IsType target ty =>
+      let seqTarget ← transformExpr target
+      return ⟨.IsType seqTarget ty, source⟩
+
+  | .InstanceCall target callee args =>
+      let seqArgs ← args.reverse.mapM transformExpr
+      let seqTarget ← transformExpr target
+      return ⟨.InstanceCall seqTarget callee seqArgs.reverse, source⟩
+
+  | .Quantifier mode param trigger body =>
+      let seqBody ← transformExpr body
+      let seqTrigger ← match trigger with
+        | some t => pure (some (← transformExpr t))
+        | none => pure none
+      return ⟨.Quantifier mode param seqTrigger seqBody, source⟩
+
+  | .Old value =>
+      let seqValue ← transformExpr value
+      return ⟨.Old seqValue, source⟩
+
+  | .Fresh value =>
+      let seqValue ← transformExpr value
+      return ⟨.Fresh seqValue, source⟩
+
+  | .Assigned name =>
+      let seqName ← transformExpr name
+      return ⟨.Assigned seqName, source⟩
+
+  | .ProveBy value proof =>
+      let seqValue ← transformExpr value
+      let seqProof ← transformExpr proof
+      return ⟨.ProveBy seqValue seqProof, source⟩
+
+  | .ContractOf ty func =>
+      let seqFunc ← transformExpr func
+      return ⟨.ContractOf ty seqFunc, source⟩
 
   | _ => return expr
   termination_by (sizeOf expr, 0)
   decreasing_by
-    all_goals (simp_all; try term_by_mem)
+    all_goals (simp_all; try have := Condition.sizeOf_condition_lt ‹_›; try term_by_mem)
+    all_goals (apply Prod.Lex.left; try term_by_mem; try omega)
 
 /--
 Process a statement, handling any assignments in its sub-expressions.
@@ -359,55 +456,29 @@ def transformStmt (stmt : StmtExprMd) : LiftM (List StmtExprMd) := do
   | .Assert cond =>
       -- Do not transform assert conditions with assignments — they must be rejected.
       -- But nondeterministic holes need to be lifted.
-      if containsNondetHole cond.condition && !containsAssignmentOrImperativeCall (← get).model cond.condition then
+      -- if containsNondetHole cond.condition && !containsAssignmentOrImperativeCall (← get).model cond.condition then
         let seqCond ← transformExpr cond.condition
         let prepends ← takePrepends
         modify fun s => { s with subst := [] }
         return prepends ++ [⟨.Assert { cond with condition := seqCond }, source⟩]
-      else
-        return [stmt]
+      -- else
+      --   return [stmt]
 
   | .Assume cond =>
-      if containsNondetHole cond && !containsAssignmentOrImperativeCall (← get).model cond then
+      -- if containsNondetHole cond && !containsAssignmentOrImperativeCall (← get).model cond then
         let seqCond ← transformExpr cond
         let prepends ← takePrepends
         modify fun s => { s with subst := [] }
         return prepends ++ [⟨.Assume seqCond, source⟩]
-      else
-        return [stmt]
+      -- else
+      --   return [stmt]
 
   | .Block stmts metadata =>
       let seqStmts ← stmts.mapM transformStmt
       return [bare (.Block seqStmts.flatten metadata)]
 
-  | .LocalVariable name ty initializer =>
-      match _ : initializer with
-      | some initExprMd =>
-         -- If the initializer is a direct imperative StaticCall, don't lift it —
-         -- translateStmt handles LocalVariable + StaticCall directly as a call statement.
-          match _: initExprMd with
-          | AstNode.mk initExpr _ =>
-          match _: initExpr with
-          | .StaticCall callee args =>
-              let model := (← get).model
-              if model.isFunction callee then
-                let seqInit ← transformExpr initExprMd
-                let prepends ← takePrepends
-                modify fun s => { s with subst := [] }
-                return prepends ++ [⟨.LocalVariable name ty (some seqInit), source⟩]
-              else
-                -- Pass through as-is; translateStmt will emit init + call
-                let seqArgs ← args.mapM transformExpr
-                let argPrepends ← takePrepends
-                modify fun s => { s with subst := [] }
-                return argPrepends ++ [⟨.LocalVariable name ty (some ⟨.StaticCall callee seqArgs, initExprMd.source⟩), source⟩]
-          | _ =>
-              let seqInit ← transformExpr initExprMd
-              let prepends ← takePrepends
-              modify fun s => { s with subst := [] }
-              return prepends ++ [⟨.LocalVariable name ty (some seqInit), source⟩]
-      | none =>
-          return [stmt]
+  | .Var (.Declare _) =>
+      return [stmt]
 
   | .Assign targets valueMd =>
       -- If the RHS is a direct imperative StaticCall, don't lift it —
@@ -416,8 +487,8 @@ def transformStmt (stmt : StmtExprMd) : LiftM (List StmtExprMd) := do
       | AstNode.mk value _ =>
       match _: value with
       | .StaticCall callee args =>
-          let model := (← get).model
-          if model.isFunction callee then
+          let imperativeCallees := (← get).imperativeCallees
+          if !imperativeCallees.contains callee.text then
             let seqValue ← transformExpr valueMd
             let prepends ← takePrepends
             modify fun s => { s with subst := [] }
@@ -473,6 +544,10 @@ def transformStmt (stmt : StmtExprMd) : LiftM (List StmtExprMd) := do
       modify fun s => { s with subst := [] }
       return prepends ++ [⟨.Return (some seqRet), source⟩]
 
+  | .PrimitiveOp name args =>
+      let seqArgs ← args.mapM transformExpr
+      let prepends ← takePrepends
+      return prepends ++ [⟨.PrimitiveOp name seqArgs, source⟩]
   | _ =>
       return [stmt]
   termination_by (sizeOf stmt, 0)
@@ -503,11 +578,20 @@ def transformProcedure (proc : Procedure) : LiftM Procedure := do
 
 /--
 Transform a program to lift all assignments that occur in an expression context.
+When `procedureNames` is non-empty, only procedures whose name appears in the
+list are transformed; all others are left unchanged. When `procedureNames` is
+empty, no procedures are transformed.
 -/
-def liftExpressionAssignments (model: SemanticModel) (program : Program) : Program :=
-  let initState : LiftState := { model := model }
-  let (seqProcedures, _) := (program.staticProcedures.mapM transformProcedure).run initState
-  { program with staticProcedures := seqProcedures }
+def liftExpressionAssignments (program : Program)
+    (model : SemanticModel) (imperativeCallees : List String) : Program :=
+  if imperativeCallees.isEmpty then program
+  else
+    let initState : LiftState := { model := model, imperativeCallees := imperativeCallees }
+    let transform := program.staticProcedures.mapM fun proc =>
+      if imperativeCallees.contains proc.name.text then transformProcedure proc
+      else pure proc
+    let (seqProcedures, _) := transform.run initState
+    { program with staticProcedures := seqProcedures }
 
 end -- public section
 end Laurel
