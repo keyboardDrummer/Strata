@@ -324,6 +324,7 @@ jobs:
 
   strata-benchmarks:
     name: Run internal benchmarks of Strata
+    if: github.repository == 'strata-org/Strata'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
