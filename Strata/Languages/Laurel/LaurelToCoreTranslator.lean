@@ -768,12 +768,11 @@ def translateLaurelToCore (options: LaurelTranslateOptions) (program : Program) 
       else
         let procDecls ← procs.flatMapM fun proc => do
           let procDecl ← translateProcedure proc
-          -- Turn free postconditions into axioms placed right behind the related procedure
-          let axiomDecls : List Core.Decl ← match proc.invokeOn with
-            | none => pure []
-            | some trigger => do
-              let axDecl? ← translateInvokeOnAxiom proc trigger
-              pure axDecl?.toList
+          -- Translate axioms (populated by the contract pass from invokeOn + ensures)
+          let axiomDecls ← proc.axioms.mapM fun ax => do
+            let coreExpr ← translateExpr ax [] (isPureContext := true)
+            return Core.Decl.ax { name := s!"invokeOn_{proc.name.text}", e := coreExpr } (identifierToCoreMd proc.name)
+
           return [Core.Decl.proc procDecl (identifierToCoreMd proc.name)] ++ axiomDecls
         return procDecls
     | .datatypes dts => do

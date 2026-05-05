@@ -266,6 +266,17 @@ private def rewriteCallSitesInProc (contractInfoMap : Std.HashMap String Contrac
     { proc with body := body }
   | _ => proc
 
+/-- Build an axiom expression from `invokeOn` trigger and ensures clauses.
+    Produces `∀ p1, ∀ p2, ..., ∀ pn :: { trigger } (ensures1 && ensures2 && ...)`. -/
+private def mkInvokeOnAxiom (params : List Parameter) (trigger : StmtExprMd)
+    (postconds : List Condition) : StmtExprMd :=
+  let body := conjoin (postconds.map (·.condition))
+  -- Wrap in nested Forall from last param (innermost) to first (outermost).
+  -- The trigger is placed on the innermost quantifier.
+  params.foldr (init := (body, true)) (fun p (acc, isInnermost) =>
+    let trig := if isInnermost then some trigger else none
+    (mkMd (.Quantifier .Forall p trig acc), false)) |>.1
+
 /-- Run the contract pass on a Laurel program.
     All procedures with contracts are transformed. -/
 def contractPass (program : Program) : Program :=
@@ -285,6 +296,14 @@ def contractPass (program : Program) : Program :=
 
   -- Transform procedures: strip contracts, add assume/assert, rewrite call sites
   let transformedProcs := program.staticProcedures.map fun proc =>
+    let proc := match proc.invokeOn with
+      | some trigger =>
+        let postconds := getPostconditions proc.body
+        if postconds.isEmpty then { proc with invokeOn := none }
+        else { proc with
+          axioms := [mkInvokeOnAxiom proc.inputs trigger postconds]
+          invokeOn := none }
+      | none => proc
     let proc := match contractInfoMap.get? proc.name.text with
       | some info =>
         { proc with
