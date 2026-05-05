@@ -27,6 +27,14 @@
         "lean_local_search",
         "lean_verify"
       ]
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "disabled": false
     }
   }
 }
