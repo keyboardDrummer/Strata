@@ -32,7 +32,7 @@ procedure outputValid(): nat
 
 // Output constraint — invalid return fails
 procedure outputInvalid(): nat
-//                         ^^^ error: assertion does not hold
+//                         ^^^ error: postcondition does not hold
   opaque
 {
   return -1
@@ -196,7 +196,7 @@ procedure captureTest(y: haslarger)
 };
 "
 
-#guard_msgs(drop info, error) in
+#guard_msgs (drop info, error) in
 #eval testInputWithOffset "ConstrainedTypes" program 14 processLaurelFile
 
 end Laurel
