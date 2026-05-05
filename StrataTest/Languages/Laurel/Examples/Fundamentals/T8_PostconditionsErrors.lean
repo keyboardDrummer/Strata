@@ -16,12 +16,9 @@ def program := r"
 
 function opaqueFunction(x: int) returns (r: int)
 //       ^^^^^^^^^^^^^^ error: functions with postconditions are not yet supported
-// The above limitation is because Core does not yet support functions with postconditions
   requires x > 0
-// TODO move function pre/post condition check to resolution, to improve the diagnostics here.
   opaque
   ensures r > 0
-// The above limitation is because functions in Core do not support postconditions
 {
   x
 };

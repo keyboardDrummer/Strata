@@ -459,6 +459,11 @@ def Body.isTransparent : Body → Bool
   | .Transparent _ => true
   | _ => false
 
+def Body.hasPostconditions : Body → Bool
+  | .Opaque posts _ _ => !posts.isEmpty
+  | .Abstract posts => !posts.isEmpty
+  | _ => false
+
 def HighTypeMd.isBool (t : HighTypeMd) : Bool := t.val.isBool
 
 /--
