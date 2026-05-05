@@ -63,9 +63,11 @@ def collectStaticCallNames (expr : StmtExprMd) : List String :=
       | none => []
   | .Block stmts _ => stmts.flatMap (fun s => collectStaticCallNames s)
   | .Assign targets v =>
-      targets.flatMap (fun t => match t.val with
+      targets.flatMap (fun t => match ht : t.val with
         | .Local _ => []
-        | .Field target _ => collectStaticCallNames target) ++
+        | .Field target _ =>
+          have : sizeOf target < sizeOf t := Variable.sizeOf_field_target t ht
+          collectStaticCallNames target) ++
       collectStaticCallNames v
   | .LocalVariable _ _ initOption =>
       match initOption with

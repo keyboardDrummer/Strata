@@ -69,8 +69,9 @@ def collectExpr (expr : StmtExpr) : StateM AnalysisResult Unit := do
   | .Assign assignTargets v =>
       -- Check if any target is a field assignment (heap write)
       for ⟨assignTarget, _⟩ in assignTargets.attach do
-        match assignTarget.val with
+        match ht : assignTarget.val with
         | .Field target _ =>
+            have : sizeOf target < sizeOf assignTarget := Variable.sizeOf_field_target assignTarget ht
             modify fun s => { s with writesHeapDirectly := true }
             collectExprMd target
         | .Local _ => pure ()
@@ -335,15 +336,15 @@ where
               return ⟨ .Block [heapAssign, v'] none, source ⟩
             else
               return heapAssign
-        | [tgtMd] =>
-          let tgt' ← recurseVariable tgtMd
-          return ⟨ .Assign [tgt'] (← recurse v), source ⟩
-        | [] =>
-            return ⟨ .Assign [] (← recurse v), source ⟩
-        | tgt :: rest =>
-            let tgt' ← recurseVariable tgt
-            let targets' ← rest.mapM recurseVariable
-            return ⟨ .Assign (tgt' :: targets') (← recurse v), source ⟩
+        | _ =>
+          let targets' ← targets.attach.mapM fun ⟨vm, hmem⟩ => do
+            match hvm : vm.val with
+            | .Local _ => pure vm
+            | .Field target fieldName =>
+              have h1 : sizeOf target < sizeOf vm := Variable.sizeOf_field_target vm hvm
+              have h2 : sizeOf vm < sizeOf targets := List.sizeOf_lt_of_mem hmem
+              pure ⟨.Field (← recurse target) fieldName, vm.source⟩
+          return ⟨ .Assign targets' (← recurse v), source ⟩
     | .PureFieldUpdate t f v => return ⟨ .PureFieldUpdate (← recurse t) f (← recurse v), source ⟩
     | .PrimitiveOp op args =>
       let args' ← args.mapM (recurse ·)
@@ -387,10 +388,7 @@ where
     | .ContractOf ty f => return ⟨ .ContractOf ty (← recurse f), source ⟩
     | _ => return exprMd
     termination_by sizeOf exprMd
-  recurseVariable (v : VariableMd) : TransformM VariableMd := do
-    match v.val with
-    | .Local _ => pure v
-    | .Field target fieldName => pure ⟨.Field (← recurse target) fieldName, v.source⟩
+    decreasing_by all_goals simp_wf; all_goals (try omega); all_goals (try term_by_mem); all_goals (try simp_all); all_goals omega
 
 def heapTransformProcedure (model: SemanticModel) (proc : Procedure) : TransformM Procedure := do
   let heapName : Identifier := "$heap"

@@ -1797,7 +1797,8 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
     -- Insert exception checks after each statement in try body
     let bodyStmtsWithChecks := bodyStmts.flatMap fun stmt =>
       let isException := mkStmtExprMd (StmtExpr.StaticCall "isError"
-        [mkStmtExprMd (StmtExpr.Variable (.Local "maybe_except"))])      let exitToHandler := mkStmtExprMd (StmtExpr.IfThenElse isException
+        [mkStmtExprMd (StmtExpr.Variable (.Local "maybe_except"))])
+      let exitToHandler := mkStmtExprMd (StmtExpr.IfThenElse isException
         (mkStmtExprMd (StmtExpr.Exit catchersLabel)) none)
       [stmt, exitToHandler]
 
@@ -1898,9 +1899,9 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
     -- Havoc the target(s) (Ellipsis always translates to Hole)
     let sr := target.ann
     let counterName := s!"@for_loop_counter_{s.toAst.ann.start.byteIdx}"
-    let counterVar := freeVar counterName
+    let counterVar := freeVarTarget counterName
     let counterDecl := mkStmtExprMd $ .LocalVariable counterName (mkHighTypeMd $ .TInt) (mkStmtExprMd $ .LiteralInt 0)
-    let counterIncrease := mkStmtExprMd $ .Assign [counterVar] (mkStmtExprMd $ .PrimitiveOp .Add [counterVar, mkStmtExprMd $ .LiteralInt 1])
+    let counterIncrease := mkStmtExprMd $ .Assign [counterVar] (mkStmtExprMd $ .PrimitiveOp .Add [freeVar counterName, mkStmtExprMd $ .LiteralInt 1])
     let indexRhs := expr.Call sr (.Name sr {val:= "Any_iter_index", ann:= sr} default)
                         {val:= #[iter, .Name sr {val:= counterName, ann:= sr} default], ann:= sr} {val:= #[], ann:= sr}
     -- Any_iter_index is defined in PythonRuntimeLaurelPart, so indexRhs would be translated into .StaticCall "Any_iter_index" ..., hot .Hole
@@ -1934,10 +1935,10 @@ partial def translateStmt (ctx : TranslationContext) (s : Python.stmt SourceRang
       | _ => pure []
     let counterLtLen := match iterExpr.val with
       | .StaticCall "range" (boundExpr::_) =>
-          mkStmtExprMd $ .PrimitiveOp .Lt [counterVar,
+          mkStmtExprMd $ .PrimitiveOp .Lt [freeVar counterName,
                           mkStmtExprMd $ .StaticCall "Any..as_int!" [boundExpr]]
       | _ =>
-          mkStmtExprMd $ .PrimitiveOp .Lt [counterVar,
+          mkStmtExprMd $ .PrimitiveOp .Lt [freeVar counterName,
                           mkStmtExprMd $ .StaticCall "Any_len" [iterExpr]]
     let bodyStmts := targetDecls ++ assumeStmts ++ bodyStmts ++ [counterIncrease]
     let innerBlock := mkStmtExprMd (StmtExpr.Block bodyStmts (some continueLabel))
@@ -2155,7 +2156,7 @@ def renameInputParams (inputs : List Parameter) (exclude : String → Bool := fu
     let orig : String := p.name.text
     let prefixed : String := paramInputPrefix ++ orig
     mkStmtExprMd (StmtExpr.LocalVariable (mkId orig) p.type
-      (some (mkStmtExprMd (StmtExpr.Variable (.Local prefixed))))
+      (some (mkStmtExprMd (StmtExpr.Variable (.Local prefixed)))))
   (renamed, copies)
 
 /-- Translate a Python function body: collect all variable declarations, hoist them

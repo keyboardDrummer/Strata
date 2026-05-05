@@ -277,7 +277,7 @@ inductive StmtExpr : Type where
   /-- A decimal literal. -/
   | LiteralDecimal (value : Decimal)
   /-- A variable reference by name or field access. -/
-  | Variable (variable : Variable)
+  | Variable (ref : Variable)
   /-- Assignment to one or more targets. Multiple targets are only allowed with identifier targets and when the value is a `StaticCall` to a procedure with multiple outputs. -/
   | Assign (targets : List (AstNode Variable)) (value : AstNode StmtExpr)
   /-- Update a field on a pure (value) type, producing a new value. -/
@@ -336,6 +336,11 @@ end
 
 theorem AstNode.sizeOf_val_lt {t : Type} [SizeOf t] (e : AstNode t) : sizeOf e.val < sizeOf e := by
   cases e; grind
+
+theorem Variable.sizeOf_field_target (v : AstNode Variable)
+    (h : v.val = .Field target fieldName) : sizeOf target < sizeOf v := by
+  have h1 := AstNode.sizeOf_val_lt v
+  rw [h] at h1; grind
 
 theorem Condition.sizeOf_condition_lt (c : Condition) : sizeOf c.condition < 1 + sizeOf c := by
   cases c; grind

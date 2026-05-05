@@ -30,10 +30,6 @@ children first, then applies `f` to the rebuilt node.
 -/
 def mapStmtExprM [Monad m] (f : StmtExprMd → m StmtExprMd) (expr : StmtExprMd) : m StmtExprMd := do
   let source := expr.source
-  let mapVar (v : VariableMd) : m VariableMd := do
-    match v.val with
-    | .Local _ => pure v
-    | .Field target fieldName => pure ⟨.Field (← mapStmtExprM f target) fieldName, v.source⟩
   -- `.attach` wraps each element with a proof of membership, which the
   -- termination checker uses to show the recursive call is on a smaller value.
   let rebuilt ← match _h : expr.val with
@@ -52,7 +48,13 @@ def mapStmtExprM [Monad m] (f : StmtExprMd → m StmtExprMd) (expr : StmtExprMd)
   | .Return v =>
     pure ⟨.Return (← v.attach.mapM fun ⟨e, _⟩ => mapStmtExprM f e), source⟩
   | .Assign targets value =>
-    pure ⟨.Assign (← targets.attach.mapM fun ⟨e, _⟩ => mapVar e) (← mapStmtExprM f value), source⟩
+    let mappedTargets ← targets.attach.mapM fun ⟨v, _⟩ => do
+      match hv : v.val with
+      | .Local _ => pure v
+      | .Field target fieldName =>
+        have : sizeOf target < sizeOf v := Variable.sizeOf_field_target v hv
+        pure ⟨.Field (← mapStmtExprM f target) fieldName, v.source⟩
+    pure ⟨.Assign mappedTargets (← mapStmtExprM f value), source⟩
   | .Variable (.Field target fieldName) =>
     pure ⟨.Variable (.Field (← mapStmtExprM f target) fieldName), source⟩
   | .PureFieldUpdate target fieldName newValue =>

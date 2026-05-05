@@ -352,17 +352,6 @@ def resolveHighType (ty : HighTypeMd) : ResolveM HighTypeMd := do
   | other => pure other
   return { val := val', source := ty.source }
 
-mutual
-def resolveVariable (parentSource : Option FileRange) (v : VariableMd) : ResolveM VariableMd := do
-  match v.val with
-  | .Local ref =>
-    let ref' ← resolveRef ref parentSource
-    pure ⟨.Local ref', v.source⟩
-  | .Field target fieldName =>
-    let target' ← resolveStmtExpr target
-    let fieldName' ← resolveFieldRef target' fieldName parentSource
-    pure ⟨.Field target' fieldName', v.source⟩
-
 def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
   match _: exprMd with
   | AstNode.mk expr source =>
@@ -399,7 +388,16 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
     let ref' ← resolveRef ref source
     pure (.Variable (.Local ref'))
   | .Assign targets value =>
-    let targets' ← targets.mapM (resolveVariable source)
+    let targets' ← targets.attach.mapM fun ⟨v, _⟩ => do
+      match hv : v.val with
+      | .Local ref =>
+        let ref' ← resolveRef ref source
+        pure ⟨.Local ref', v.source⟩
+      | .Field target fieldName =>
+        have : sizeOf target < sizeOf v := Variable.sizeOf_field_target v hv
+        let target' ← resolveStmtExpr target
+        let fieldName' ← resolveFieldRef target' fieldName source
+        pure ⟨.Field target' fieldName', v.source⟩
     let value' ← resolveStmtExpr value
     pure (.Assign targets' value')
   | .Variable (.Field target fieldName) =>
@@ -481,7 +479,6 @@ def resolveStmtExpr (exprMd : StmtExprMd) : ResolveM StmtExprMd := do
   return { val := val', source := source }
   termination_by exprMd
   decreasing_by all_goals term_by_mem
-end
 
 /-- Resolve a parameter: assign a fresh ID and add to scope. -/
 def resolveParameter (param : Parameter) : ResolveM Parameter := do
@@ -664,9 +661,11 @@ private def collectStmtExpr (map : Std.HashMap Nat ResolvedNode) (expr : StmtExp
   | .Variable (.Local _) => map
   | .Variable (.Field target _) => collectStmtExpr map target
   | .Assign targets value =>
-    let map := targets.foldl (fun m t => match t.val with
+    let map := targets.foldl (fun m t => match ht : t.val with
       | .Local _ => m
-      | .Field target _ => collectStmtExpr m target) map
+      | .Field target _ =>
+        have : sizeOf target < sizeOf t := Variable.sizeOf_field_target t ht
+        collectStmtExpr m target) map
     collectStmtExpr map value
   | .PureFieldUpdate target _ newVal =>
     let map := collectStmtExpr map target
@@ -701,6 +700,8 @@ private def collectStmtExpr (map : Std.HashMap Nat ResolvedNode) (expr : StmtExp
   | .ContractOf _ fn => collectStmtExpr map fn
   | .New _ | .This | .Exit _ | .LiteralInt _ | .LiteralBool _ | .LiteralString _ | .LiteralDecimal _
   | .Abstract | .All | .Hole _ _ => map
+termination_by expr
+decreasing_by all_goals (try have := AstNode.sizeOf_val_lt expr); all_goals term_by_mem
 
 private def collectBody (map : Std.HashMap Nat ResolvedNode) (body : Body)
     : Std.HashMap Nat ResolvedNode :=

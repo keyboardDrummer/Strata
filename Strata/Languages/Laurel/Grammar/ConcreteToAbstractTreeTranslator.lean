@@ -253,14 +253,14 @@ partial def translateStmtExpr (arg : Arg) : TransM StmtExprMd := do
     | q`Laurel.parenthesis, #[arg0] => translateStmtExpr arg0
     | q`Laurel.assign, #[arg0, arg1] =>
       let target ← translateStmtExpr arg0
-      let variable := stmtExprToVariable target
+      let varTarget := stmtExprToVariable target
       let value ← translateStmtExpr arg1
-      return mkStmtExprMd (.Assign [variable] value) src
+      return mkStmtExprMd (.Assign [varTarget] value) src
     | q`Laurel.multiAssign, #[targetsSeq, arg1] =>
-      let targetExprs ← match targetsSeq with
-        | .seq _ .comma args => args.toList.mapM translateStmtExpr
+      let targetIdents ← match targetsSeq with
+        | .seq _ .comma args => args.toList.mapM translateIdent
         | _ => pure []
-      let variables := targetExprs.map stmtExprToVariable
+      let variables := targetIdents.map fun name => (⟨.Local name, name.source⟩ : VariableMd)
       let value ← translateStmtExpr arg1
       return mkStmtExprMd (.Assign variables value) src
     | q`Laurel.new, #[nameArg] =>

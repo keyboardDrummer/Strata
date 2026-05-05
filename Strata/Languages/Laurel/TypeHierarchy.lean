@@ -135,7 +135,19 @@ def validateDiamondFieldAccessesForStmtExpr (model : SemanticModel)
   | .Block stmts _ =>
     stmts.flatMap (fun s => validateDiamondFieldAccessesForStmtExpr model s)
   | .Assign targets value =>
-    let targetErrors := targets.attach.foldl (fun acc ⟨t, _⟩ => acc ++ validateDiamondFieldAccessesForStmtExpr model t) []
+    let targetErrors := targets.attach.foldl (fun acc ⟨t, _⟩ => acc ++ match ht : t.val with
+      | .Local _ => []
+      | .Field target fieldName =>
+        have : sizeOf target < sizeOf t := Variable.sizeOf_field_target t ht
+        let innerErrors := validateDiamondFieldAccessesForStmtExpr model target
+        let fieldError := match (computeExprType model target).val with
+          | .UserDefined typeName =>
+            if isDiamondInheritedField model typeName fieldName then
+              let fileRange := t.source.getD FileRange.unknown
+              [DiagnosticModel.withRange fileRange s!"fields that are inherited multiple times can not be accessed."]
+            else []
+          | _ => []
+        innerErrors ++ fieldError) []
     targetErrors ++ validateDiamondFieldAccessesForStmtExpr model value
   | .IfThenElse c t e =>
     let errs := validateDiamondFieldAccessesForStmtExpr model c ++

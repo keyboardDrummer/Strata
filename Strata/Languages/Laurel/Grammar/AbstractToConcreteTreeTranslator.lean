@@ -109,11 +109,16 @@ where
       let initOpt := optionArg (init.map fun e => laurelOp "initializer" #[stmtExprToArg e])
       laurelOp "varDecl" #[ident name.text, typeOpt, initOpt]
     | .Assign targets value =>
-      -- Grammar only supports single-target assign; use first target or placeholder
-      let targetArg := match targets with
-        | t :: _ => variableToArg t
-        | [] => laurelOp "identifier" #[ident "_"]
-      laurelOp "assign" #[targetArg, stmtExprToArg value]
+      if targets.length > 1 then
+        let targetArgs := targets.map fun t => match t.val with
+          | .Local name => ident name.text
+          | .Field _ _ => ident "_"
+        laurelOp "multiAssign" #[commaSep targetArgs.toArray, stmtExprToArg value]
+      else
+        let targetArg := match targets with
+          | t :: _ => variableToArg t
+          | [] => laurelOp "identifier" #[ident "_"]
+        laurelOp "assign" #[targetArg, stmtExprToArg value]
     | .StaticCall callee args =>
       let calleeArg := laurelOp "identifier" #[ident callee.text]
       let argsArr := args.map stmtExprToArg |>.toArray
