@@ -42,6 +42,7 @@ def buildDir : IO String := do
   let cwd ← IO.currentDir
   return s!"{cwd}/Build/"
 
+/-- For local debugging; never invoked in CI. -/
 def processLaurelFileKeepIntermediates (input : InputContext) : IO (Array Diagnostic) := do
   let dir ← buildDir
   processLaurelFileWithOptions { translateOptions := { keepAllFilesPrefix := dir}} input
