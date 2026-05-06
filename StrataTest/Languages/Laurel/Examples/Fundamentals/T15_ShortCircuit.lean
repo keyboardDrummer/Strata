@@ -14,7 +14,7 @@ namespace Laurel
 
 def shortCircuitProgram := r"
 function mustNotCallFunc(x: int): int
-  requires false
+   requires false
 { x };
 
 procedure mustNotCallProc(): int
@@ -91,7 +91,7 @@ procedure testImpliesProc()
 };
 "
 
-#guard_msgs(drop info) in
+#guard_msgs (drop info) in
 #eval testInputWithOffset "ShortCircuit" shortCircuitProgram 15 processLaurelFile
 
 end Laurel

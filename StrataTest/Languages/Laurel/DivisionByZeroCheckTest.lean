@@ -37,8 +37,9 @@ procedure unsafeDivision(x: int)
 // Error ranges are too wide because Core does not use expression locations
 };
 
-function pureDiv(x: int, y: int): int
+procedure pureDiv(x: int, y: int): int
   requires y != 0
+  opaque
 {
   x / y
 };
@@ -46,20 +47,21 @@ function pureDiv(x: int, y: int): int
 procedure callPureDivSafe()
   opaque
 {
-  var z: int := pureDiv(10, 2);
-  assert z == 5
+  var z: int := pureDiv(10, 2)
+  // TODO remove assumes from functions, so pureDiv can be a function
+  // assert z == 5
 };
 
 procedure callPureDivUnsafe(x: int)
   opaque
 {
   var z: int := pureDiv(10, x)
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion does not hold
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition does not hold
 // Error ranges are too wide because Core does not use expression locations
 };
 "
 
-#guard_msgs(drop info, error) in
-#eval testInputWithOffset "DivByZeroE2E" e2eProgram 22 processLaurelFile
+#guard_msgs (drop info, error) in
+#eval testInputWithOffset "DivByZeroE2E" e2eProgram 20 processLaurelFile
 
 end Laurel

@@ -200,6 +200,9 @@ structure Procedure : Type where
       whose body is the ensures clause universally quantified over the procedure's inputs,
       with this expression as the SMT trigger. -/
   invokeOn : Option (AstNode StmtExpr) := none
+  /-- Axioms to emit alongside this procedure. Populated by the contract pass from
+      `invokeOn` and ensures clauses. -/
+  axioms : List (AstNode StmtExpr) := []
 
 /--
 A typed parameter for a procedure.
@@ -457,6 +460,11 @@ def Body.isExternal : Body → Bool
 
 def Body.isTransparent : Body → Bool
   | .Transparent _ => true
+  | _ => false
+
+def Body.hasPostconditions : Body → Bool
+  | .Opaque posts _ _ => !posts.isEmpty
+  | .Abstract posts => !posts.isEmpty
   | _ => false
 
 def HighTypeMd.isBool (t : HighTypeMd) : Bool := t.val.isBool

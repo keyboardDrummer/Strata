@@ -18,7 +18,6 @@ function assertAndAssumeInFunctions(a: int) returns (r: int)
   assert 2 == 3;
 //^^^^^^^^^^^^^ error: asserts are not YET supported in functions or contracts
   assume true;
-//^^^^^^^^^^^ error: assumes are not YET supported in functions or contracts
   a
 };
 

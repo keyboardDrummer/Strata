@@ -238,6 +238,7 @@ private def procedureToOp (proc : Procedure) : Strata.Operation :=
   let requiresArgs := proc.preconditions.map requiresClauseToArg |>.toArray
   let invokeOnArg := optionArg (proc.invokeOn.map fun e =>
     laurelOp "invokeOnClause" #[stmtExprToArg e])
+  let axiomsArgs := proc.axioms.map (fun ax => laurelOp "axiomClause" #[stmtExprToArg ax]) |>.toArray
   let (opaqueSpecArg, bodyArg) := match proc.body with
     | .Transparent body =>
       (optionArg none, optionArg (some (laurelOp "body" #[stmtExprToArg body])))
@@ -260,6 +261,7 @@ private def procedureToOp (proc : Procedure) : Strata.Operation :=
       returnParamsArg,
       seqArg requiresArgs,
       invokeOnArg,
+      seqArg axiomsArgs,
       opaqueSpecArg,
       bodyArg
     ] }

@@ -465,9 +465,9 @@ def parseProcedure (arg : Arg) : TransM Procedure := do
 
   match op.name, op.args with
   | q`Laurel.procedure, #[nameArg, paramArg, returnTypeArg, returnParamsArg,
-      requiresArg, invokeOnArg, opaqueSpecArg, bodyArg]
+      requiresArg, invokeOnArg, axiomsArg, opaqueSpecArg, bodyArg]
   | q`Laurel.function, #[nameArg, paramArg, returnTypeArg, returnParamsArg,
-      requiresArg, invokeOnArg, opaqueSpecArg, bodyArg] =>
+      requiresArg, invokeOnArg, axiomsArg, opaqueSpecArg, bodyArg] =>
     let name ← translateIdent nameArg
     let parameters ← translateParameters paramArg
     -- Either returnTypeArg or returnParamsArg may have a value, not both
@@ -497,6 +497,15 @@ def parseProcedure (arg : Arg) : TransM Procedure := do
         | _, _ => TransM.error s!"Expected invokeOnClause operation, got {repr invokeOnOp.name}"
       | .option _ none => pure none
       | _ => pure none
+    -- Parse axiom clauses (zero or more)
+    let axioms ← match axiomsArg with
+      | .seq _ _ args => args.toList.mapM fun clauseArg => do
+        match clauseArg with
+        | .op clauseOp => match clauseOp.name, clauseOp.args with
+          | q`Laurel.axiomClause, #[exprArg] => translateStmtExpr exprArg
+          | _, _ => TransM.error s!"Expected axiomClause operation, got {repr clauseOp.name}"
+        | _ => TransM.error s!"Expected axiomClause operation in axioms sequence"
+      | _ => pure []
     -- Parse optional opaqueSpec (contains ensures and modifies)
     let (isOpaque, postconditions, modifies) ← match opaqueSpecArg with
       | .option _ (some (.op opaqueSpecOp)) => match opaqueSpecOp.name, opaqueSpecOp.args with
@@ -535,11 +544,12 @@ def parseProcedure (arg : Arg) : TransM Procedure := do
       decreases := none
       isFunctional := op.name == q`Laurel.function
       invokeOn := invokeOn
+      axioms := axioms
       body := procBody
     }
   | q`Laurel.procedure, args
   | q`Laurel.function, args =>
-    TransM.error s!"parseProcedure expects 8 arguments, got {args.size}"
+    TransM.error s!"parseProcedure expects 9 arguments, got {args.size}"
   | _, _ =>
     TransM.error s!"parseProcedure expects procedure or function, got {repr op.name}"
 
