@@ -343,9 +343,10 @@ private def exprAsUnusedInit (expr : StmtExprMd) (md : Imperative.MetaData Core.
     : TranslateM (List Core.Statement) := do
   let coreExpr ← translateExpr expr
   let id ← freshId
+  let model := (← get).model
   let ident : Core.CoreIdent := ⟨s!"$unused_{id}", ()⟩
-  let tyVarName := s!"$__ty_unused_{id}"
-  let coreType := LTy.forAll [tyVarName] (.ftvar tyVarName)
+  let ty ← translateType (computeExprType model expr)
+  let coreType := LTy.forAll [] ty
   return [Core.Statement.init ident coreType (.det coreExpr) md]
 
 def throwStmtDiagnostic (d : DiagnosticModel): TranslateM (List Core.Statement) := do

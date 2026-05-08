@@ -215,7 +215,7 @@ def translateWithLaurel (options : LaurelTranslateOptions) (program : Program)
     if translateState.coreDiagnostics.length > 0 && allDiagnostics.isEmpty then
       -- The program was suppressed but no diagnostics explain why — report the core diagnostics
       -- that have a known source location (those without one are not actionable for the user).
-      let locatedDiags := translateState.coreDiagnostics.filter (·.fileRange != FileRange.unknown)
+      let locatedDiags := translateState.coreDiagnostics
       allDiagnostics := allDiagnostics ++ locatedDiags
 
     let coreProgramOption :=
