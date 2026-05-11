@@ -174,10 +174,13 @@ def containsAssignmentOrImperativeCall (model: SemanticModel) (expr : StmtExprMd
       containsAssignmentOrImperativeCall model cond ||
       containsAssignmentOrImperativeCall model th ||
       match el with | some e => containsAssignmentOrImperativeCall model e | none => false
+  | .Assert cond => containsAssignmentOrImperativeCall model cond.condition
+  | .Assume cond => containsAssignmentOrImperativeCall model cond
   | _ => false
   termination_by expr
   decreasing_by
     all_goals ((try cases x); simp_all; try term_by_mem)
+    all_goals (have := Condition.sizeOf_condition_lt cond; omega)
 
 /-- Check if an expression contains any nondeterministic holes (recursively). -/
 private def containsNondetHole (expr : StmtExprMd) : Bool :=
@@ -330,6 +333,28 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
           | none => pure none
         return ⟨.IfThenElse seqCond seqThen seqElse, source⟩
 
+  | .Assert cond =>
+      let prePrepends ← takePrepends
+      let savedSubst := (← get).subst
+      modify fun s => { s with subst := [] }
+      let seqCond ← transformExpr cond.condition
+      let argPrepends ← takePrepends
+      modify fun s => { s with subst := savedSubst }
+      let liftedAssert := [⟨.Assert { cond with condition := seqCond }, source⟩]
+      modify fun s => { s with prependedStmts := s.prependedStmts ++ argPrepends ++ liftedAssert ++ prePrepends }
+      return bare (.LiteralBool true)
+
+  | .Assume cond =>
+      let prePrepends ← takePrepends
+      let savedSubst := (← get).subst
+      modify fun s => { s with subst := [] }
+      let seqCond ← transformExpr cond
+      let argPrepends ← takePrepends
+      modify fun s => { s with subst := savedSubst }
+      let liftedAssume := [⟨.Assume seqCond, source⟩]
+      modify fun s => { s with prependedStmts := s.prependedStmts ++ argPrepends ++ liftedAssume ++ prePrepends }
+      return bare (.LiteralBool true)
+
   | .Block stmts labelOption =>
       let newStmts := (← stmts.reverse.mapM transformExpr).reverse
       return ⟨ .Block (← onlyKeepSideEffectStmtsAndLast newStmts) labelOption, source⟩
@@ -349,6 +374,7 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
   termination_by (sizeOf expr, 0)
   decreasing_by
     all_goals (simp_all; try term_by_mem)
+    all_goals (have := Condition.sizeOf_condition_lt cond; omega)
 
 /--
 Process a statement, handling any assignments in its sub-expressions.
@@ -359,24 +385,16 @@ def transformStmt (stmt : StmtExprMd) : LiftM (List StmtExprMd) := do
   | AstNode.mk val source =>
   match val with
   | .Assert cond =>
-      -- Do not transform assert conditions with assignments — they must be rejected.
-      -- But nondeterministic holes need to be lifted.
-      if containsNondetHole cond.condition && !containsAssignmentOrImperativeCall (← get).model cond.condition then
-        let seqCond ← transformExpr cond.condition
-        let prepends ← takePrepends
-        modify fun s => { s with subst := [] }
-        return prepends ++ [⟨.Assert { cond with condition := seqCond }, source⟩]
-      else
-        return [stmt]
+      let seqCond ← transformExpr cond.condition
+      let prepends ← takePrepends
+      modify fun s => { s with subst := [] }
+      return prepends ++ [⟨.Assert { cond with condition := seqCond }, source⟩]
 
   | .Assume cond =>
-      if containsNondetHole cond && !containsAssignmentOrImperativeCall (← get).model cond then
-        let seqCond ← transformExpr cond
-        let prepends ← takePrepends
-        modify fun s => { s with subst := [] }
-        return prepends ++ [⟨.Assume seqCond, source⟩]
-      else
-        return [stmt]
+      let seqCond ← transformExpr cond
+      let prepends ← takePrepends
+      modify fun s => { s with subst := [] }
+      return prepends ++ [⟨.Assume seqCond, source⟩]
 
   | .Block stmts metadata =>
       let seqStmts ← stmts.mapM transformStmt

@@ -52,4 +52,44 @@ info: procedure assertInBlockExpr()
   for proc in program.staticProcedures do
     IO.println (toString (Std.Format.pretty (Std.ToFormat.format proc)))
 
+def assertWithAssignProgram : String := r"
+procedure foo()
+{
+  var x: int := 1;
+  var y: int := {
+     assert x > 0;
+     3
+  };
+  assert (x := 2) == 2
+};
+"
+
+/--
+info: procedure foo()
+{ var x: int := 1; assert x > 0; var y: int := { 3 }; var $x_0: int := x; x := 2; assert x == 2 };
+-/
+#guard_msgs in
+#eval! do
+  let program ← parseLaurelAndLift assertWithAssignProgram
+  for proc in program.staticProcedures do
+    IO.println (toString (Std.Format.pretty (Std.ToFormat.format proc)))
+
+def assumeWithAssignProgram : String := r"
+procedure bar()
+{
+  var x: int := 1;
+  assume (x := 2) == 2
+};
+"
+
+/--
+info: procedure bar()
+{ var x: int := 1; var $x_0: int := x; x := 2; assume x == 2 };
+-/
+#guard_msgs in
+#eval! do
+  let program ← parseLaurelAndLift assumeWithAssignProgram
+  for proc in program.staticProcedures do
+    IO.println (toString (Std.Format.pretty (Std.ToFormat.format proc)))
+
 end Laurel
