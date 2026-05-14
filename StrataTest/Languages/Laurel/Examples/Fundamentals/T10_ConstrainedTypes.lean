@@ -196,7 +196,7 @@ procedure captureTest(y: haslarger)
 };
 "
 
-#guard_msgs(drop info, error) in
+#guard_msgs (drop info, error) in
 #eval testInputWithOffset "ConstrainedTypes" program 14 processLaurelFile
 
 end Laurel
