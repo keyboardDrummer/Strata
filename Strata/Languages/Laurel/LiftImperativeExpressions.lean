@@ -311,6 +311,13 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         | some e => containsAssignmentOrImperativeCall imperativeCallees e
         | none => false
       if thenHasAssign || elseHasAssign then
+
+        -- Infer type from the ORIGINAL then-branch (not the transformed one),
+        -- because the transformed expression may reference freshly generated
+        -- variables (e.g. $c_2) that don't exist in the SemanticModel yet.
+        let condType ← computeType thenBranch
+        let needsCondVar := condType.val != .TVoid
+
         -- Lift the entire if-then-else. Introduce a fresh variable for the result.
         let condVar ← freshCondVar
         let seqCond ← transformExpr cond
@@ -321,25 +328,24 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         modify fun s => { s with prependedStmts := [], subst := [] }
         let seqThen ← transformExpr thenBranch
         let thenPrepends ← takePrepends
-        let thenBlock := bare (.Block (thenPrepends ++ [⟨.Assign [⟨ .Local condVar, source⟩] seqThen, source⟩]) none)
+        let assignStmts := if needsCondVar then [⟨.Assign [⟨ .Local condVar, source⟩] seqThen, source⟩] else []
+        let thenBlock := bare (.Block (thenPrepends ++ assignStmts) none)
         -- Process else-branch from scratch
         modify fun s => { s with prependedStmts := [], subst := [] }
         let seqElse ← match elseBranch with
           | some e => do
               let se ← transformExpr e
               let elsePrepends ← takePrepends
-              pure (some (bare (.Block (elsePrepends ++ [⟨.Assign [⟨ .Local condVar, source⟩] se, source⟩]) none)))
+              let assignStmts: List StmtExprMd := if needsCondVar then [⟨.Assign [⟨ .Local condVar, source⟩] se, source⟩] else [];
+              pure (some (bare (.Block (elsePrepends ++ assignStmts) none)))
           | none => pure none
         -- Restore outer state
         modify fun s => { s with subst := savedSubst, prependedStmts := savedPrepends }
-        -- Infer type from the ORIGINAL then-branch (not the transformed one),
-        -- because the transformed expression may reference freshly generated
-        -- variables (e.g. $c_2) that don't exist in the SemanticModel yet.
-        let condType ← computeType thenBranch
         -- IfThenElse added first (cons puts it deeper), then declaration (cons puts it on top)
         -- Output order: declaration, then if-then-else
         prepend (⟨.IfThenElse seqCond thenBlock seqElse, source⟩)
-        prepend (bare (.Var (.Declare ⟨condVar, condType⟩)))
+        if needsCondVar then
+          prepend (bare (.Var (.Declare ⟨condVar, condType⟩)))
         return bare (.Var (.Local condVar))
       else
         -- No assignments in branches — recurse normally
