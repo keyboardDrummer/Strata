@@ -30,7 +30,7 @@ procedure caller()
   opaque
 {
   var x: int := hasRequires(1);
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion could not be proved
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition could not be proved
   var y: int := hasRequires(3)
 };
 
@@ -44,7 +44,7 @@ procedure aFunctionWithPreconditionCaller()
   opaque
 {
   var x: int := aFunctionWithPrecondition(0)
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion could not be proved
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition could not be proved
 // Error ranges are too wide because Core does not use expression locations
 };
 
@@ -61,7 +61,7 @@ procedure multipleRequiresCaller()
 {
   var a: int := multipleRequires(1, 2);
   var b: int := multipleRequires(-1, 2)
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion could not be proved
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition could not be proved
 };
 
 function funcMultipleRequires(x: int, y: int): int
@@ -76,7 +76,7 @@ procedure funcMultipleRequiresCaller()
 {
   var a: int := funcMultipleRequires(1, 2);
   var b: int := funcMultipleRequires(1, -1)
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: assertion could not be proved
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error: precondition could not be proved
 };
 "
 

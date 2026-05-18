@@ -149,8 +149,7 @@ procedure addProcCaller(): int
 "
 
 #guard_msgs (error, drop all) in
-#eval! testInputWithOffset "NestedImpureStatements" program 14
-  (processLaurelFileWithOptions { translateOptions := { keepAllFilesPrefix := "/home/ubuntu/repos/Strata/Build/"}})
+#eval! testInputWithOffset "NestedImpureStatements" program 14 processLaurelFileKeepIntermediates
 
 
 end Laurel

@@ -584,14 +584,10 @@ empty, no procedures are transformed.
 -/
 def liftExpressionAssignments (program : Program)
     (model : SemanticModel) (imperativeCallees : List String) : Program :=
-  if imperativeCallees.isEmpty then program
-  else
-    let initState : LiftState := { model := model, imperativeCallees := imperativeCallees }
-    let transform := program.staticProcedures.mapM fun proc =>
-      if imperativeCallees.contains proc.name.text then transformProcedure proc
-      else pure proc
-    let (seqProcedures, _) := transform.run initState
-    { program with staticProcedures := seqProcedures }
+  let initState : LiftState := { model := model, imperativeCallees := imperativeCallees }
+  let transform := program.staticProcedures.mapM transformProcedure
+  let (seqProcedures, _) := transform.run initState
+  { program with staticProcedures := seqProcedures }
 
 end -- public section
 end Laurel
