@@ -179,6 +179,20 @@ procedure fieldAssignsFromHeapModifyingMultipleReturnCaller()
   assert y == 2;
   assert z == 3
 };
+<<<<<<< HEAD
+=======
+
+procedure fieldTargetInMultiAssign()
+  opaque
+{
+  var c: Container := new Container;
+  var y: int;
+  assign c#intValue, y, var z: int := modifyHeapAndReturnMultiple(c);
+  assert c#intValue == 1;
+  assert y == 2;
+  assert z == 3
+};
+>>>>>>> formatting-and-debugging-improvements
 "#
 
 #guard_msgs(drop info, error) in

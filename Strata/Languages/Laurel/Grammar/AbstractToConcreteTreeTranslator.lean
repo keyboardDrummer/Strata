@@ -62,7 +62,7 @@ partial def highTypeValToArg : HighType → Arg
     | [] => laurelOp "compositeType" #[ident "Unknown"]
     | t :: _ => highTypeToArg t
   | .Unknown => laurelOp "compositeType" #[ident "Unknown"]
-  | .MultiValuedExpr _ => laurelOp "compositeType" #[ident "Unknown"]
+  | .MultiValuedExpr _ => laurelOp "compositeType" #[ident "BUG_MultiValuedExpr"]
 
 end
 

@@ -194,6 +194,16 @@ def mkCoreType (s: String): HighTypeMd :=
 def mkStmtExprMd (expr : StmtExpr) : StmtExprMd :=
   { val := expr, source := none }
 
+/-- Create a VariableMd with default metadata -/
+def mkVariableMd (v : Variable) : VariableMd :=
+  { val := v, source := none }
+
+/-- Extract a Variable from a StmtExpr. Throws if the expression is not a Var. -/
+def stmtExprToVar (e : StmtExprMd) : Except TranslationError VariableMd :=
+  match e.val with
+  | .Var v => .ok { val := v, source := e.source }
+  | _ => .error (.internalError "stmtExprToVar: expected Var node")
+
 /-- A wildcard modifies list, meaning the procedure may modify anything. -/
 def wildcardModifies : List StmtExprMd := [mkStmtExprMd .All]
 /-- Create a VariableMd with default metadata -/

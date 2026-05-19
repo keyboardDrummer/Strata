@@ -53,9 +53,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { var x: int := 1 + <?> };
+=======
+procedure test() opaque { var x: int := 1 + <?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Bare Hole as Assign Declare initializer → replaced with call (no longer preserved as havoc).
@@ -71,9 +75,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { var x: int := <?> };
+=======
+procedure test() opaque { var x: int := <?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole in comparison arg inside assert → int (inferred from sibling literal).
@@ -89,9 +97,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { assert <?> > 0 };
+=======
+procedure test() opaque { assert <?> > 0 };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole directly as assert condition → bool.
@@ -107,9 +119,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { assert <?> };
+=======
+procedure test() opaque { assert <?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole directly as assume condition → bool.
@@ -125,9 +141,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { assume <?> };
+=======
+procedure test() opaque { assume <?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole as if-then-else condition → bool.
@@ -145,9 +165,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { if <?> then { assert true } };
+=======
+procedure test() opaque { if <?> then { assert true } };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole in then-branch of if-then-else inside typed local variable → int.
@@ -163,9 +187,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { var x: int := if true then <?> else 0 };
+=======
+procedure test() opaque { var x: int := if true then <?> else 0 };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole as while-loop condition → bool.
@@ -183,9 +211,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { while(<?>) {} };
+=======
+procedure test() opaque { while(<?>) {} };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole as while-loop invariant → bool.
@@ -204,9 +236,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { while(true) invariant <?> {} };
+=======
+procedure test() opaque { while(true) invariant <?> {} };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 /-! ## Operators -/
@@ -224,9 +260,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { assert true && <?> };
+=======
+procedure test() opaque { assert true && <?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole in Neg inside typed local variable → int.
@@ -242,9 +282,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { var x: int := -<?> };
+=======
+procedure test() opaque { var x: int := -<?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole in StrConcat inside typed local variable → string.
@@ -253,13 +297,17 @@ info: function $hole_0()
   returns ($result: string)
   opaque;
 procedure test()
+<<<<<<< HEAD
+=======
+  opaque
+>>>>>>> formatting-and-debugging-improvements
 {
   var s: string := "hello" ++ $hole_0()
 };
 -/
 #guard_msgs in
 #eval! parseElimAndPrint
-  "procedure test() { var s: string := \"hello\" ++ <?> };"
+  "procedure test() opaque { var s: string := \"hello\" ++ <?> };"
 
 /-! ## Multiple holes -/
 
@@ -279,9 +327,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { var x: int := <?> + <?> };
+=======
+procedure test() opaque { var x: int := <?> + <?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Holes across statements: Mul arg (int) then assert condition (bool).
@@ -301,9 +353,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { var x: int := 2 * <?>; assert <?> };
+=======
+procedure test() opaque { var x: int := 2 * <?>; assert <?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 /-! ## Combinations: holes in nested contexts -/
@@ -323,9 +379,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { if 1 + <?> > 0 then { assert true } };
+=======
+procedure test() opaque { if 1 + <?> > 0 then { assert true } };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole in Implies inside while invariant → bool.
@@ -345,9 +405,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { var p: bool; while(true) invariant p ==> <?> {} };
+=======
+procedure test() opaque { var p: bool; while(true) invariant p ==> <?> {} };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Hole in Mul inside typed local variable with real type → real.
@@ -363,9 +427,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { var r: real := 3.14 * <?> };
+=======
+procedure test() opaque { var r: real := 3.14 * <?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 /-! ## Call argument and return type inference -/
@@ -383,9 +451,13 @@ procedure test(n: int)
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test(n: int)
   opaque
 { assert n > <?> };
+=======
+procedure test(n: int) opaque { assert n > <?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 /-! ## Holes in functions -/
@@ -403,9 +475,13 @@ function test(x: int): int
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 function test(x: int): int
   opaque
 { <?> };
+=======
+function test(x: int): int opaque { <?> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 /-! ## Nondeterministic holes (<??>) -/
@@ -420,9 +496,13 @@ info: procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { assert <??> };
+=======
+procedure test() opaque { assert <??> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Mixed: det hole eliminated, nondet hole preserved.
@@ -439,9 +519,13 @@ procedure test()
 -/
 #guard_msgs in
 #eval! parseElimAndPrint r"
+<<<<<<< HEAD
 procedure test()
   opaque
 { var x: int := <?>; assert <??> };
+=======
+procedure test() opaque { var x: int := <?>; assert <??> };
+>>>>>>> formatting-and-debugging-improvements
 "
 
 -- Nondet hole in function → should be rejected (not tested here since

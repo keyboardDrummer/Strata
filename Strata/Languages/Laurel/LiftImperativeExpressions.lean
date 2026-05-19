@@ -199,18 +199,22 @@ def containsAssignmentOrImperativeCall (imperativeCallees : List String) (expr :
     all_goals (try term_by_mem)
     all_goals omega
 
-/-- Check if an expression contains any nondeterministic holes (recursively). -/
-private def containsNondetHole (expr : StmtExprMd) : Bool :=
+/-- Check if an expression contains any non-functional procedure calls (recursively). -/
+def containsImperativeCall (model : SemanticModel) (expr : StmtExprMd) : Bool :=
   match expr with
   | AstNode.mk val _ =>
   match val with
-  | .Hole false _ => true
-  | .PrimitiveOp _ args => args.attach.any (fun x => containsNondetHole x.val)
-  | .StaticCall _ args => args.attach.any (fun x => containsNondetHole x.val)
-  | .Block stmts _ => stmts.attach.any (fun x => containsNondetHole x.val)
+  | .StaticCall name args =>
+    (match model.get name with
+    | .staticProcedure proc => !proc.isFunctional
+    | _ => false) ||
+      args.attach.any (fun x => containsImperativeCall model x.val)
+  | .PrimitiveOp _ args => args.attach.any (fun x => containsImperativeCall model x.val)
+  | .Block stmts _ => stmts.attach.any (fun x => containsImperativeCall model x.val)
   | .IfThenElse cond th el =>
-      containsNondetHole cond || containsNondetHole th ||
-      match el with | some e => containsNondetHole e | none => false
+      containsImperativeCall model cond ||
+      containsImperativeCall model th ||
+      match el with | some e => containsImperativeCall model e | none => false
   | _ => false
   termination_by expr
   decreasing_by
@@ -288,15 +292,26 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       return ⟨.PrimitiveOp op seqArgs.reverse, source⟩
 
   | .StaticCall callee args =>
+    let model := (← get).model
     let imperativeCallees := (← get).imperativeCallees
     let seqArgs ← args.reverse.mapM transformExpr
     let seqCall := ⟨.StaticCall callee seqArgs.reverse, source⟩
     if !imperativeCallees.contains callee.text then
       return seqCall
     else
-      -- Imperative call in expression position: lift it like an assignment
+      -- Imperative call in expression position: lift to an assignment.
+      -- Only valid for single-output procedures (or unresolved ones where we
+      -- fall back to a single target). Multi-output procedures in expression
+      -- position are a bug in the upstream translation — Resolution should
+      -- emit a diagnostic for that case.
+      let outputs := match model.get callee with
+        | .staticProcedure proc => proc.outputs
+        | .instanceProcedure _ proc => proc.outputs
+        | _ => []
       let callResultVar ← freshCondVar
-      let callResultType ← computeType expr
+      let callResultType ← match outputs with
+        | [single] => pure single.type
+        | _ => computeType expr
       let liftedCall := [
         ⟨ (.Var (.Declare ⟨callResultVar, callResultType⟩)), source ⟩,
         ⟨.Assign [⟨ .Local callResultVar, source⟩] seqCall, source⟩

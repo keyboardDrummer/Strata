@@ -62,8 +62,11 @@ structure TranslateState where
   model : SemanticModel
   /-- Overflow check configuration -/
   overflowChecks : Core.OverflowChecks := {}
-  /-- Do not process the produces Core program, since it has superfluous errors -/
-  coreProgramHasSuperfluousErrors: Bool := false
+  /-- Diagnostics that indicate the Core program should not be processed further.
+      When non-empty, the produced Core program is suppressed. Each entry records
+      why the program was deemed invalid so that if no other diagnostics explain
+      the suppression, these can be surfaced to the user. -/
+  coreDiagnostics : List DiagnosticModel := []
   /-- When `true`, use safe division (`intSafeDivOp`) and safe datatype selectors
       (with preconditions). When `false`, use unsafe division (`intDivOp`) and
       unsafe datatype selectors (without preconditions).
@@ -96,8 +99,9 @@ private def adjustSelectorName (name : String) (proof : Bool) : String :=
       if name.endsWith "!" then name else name ++ "!"
   | _ => name  -- not a destructor name, leave unchanged
 
-private def invalidCoreType : TranslateM LMonoTy := do
-  modify fun s => { s with coreProgramHasSuperfluousErrors := true }
+private def invalidCoreType (source : Option FileRange) (reason : String) : TranslateM LMonoTy := do
+  modify fun s => { s with coreDiagnostics := s.coreDiagnostics ++
+    [diagnosticFromSource source reason DiagnosticType.StrataBug] }
   return .tcons s!"LaurelResolutionErrorPlaceholder" []
 
 /-
@@ -121,14 +125,15 @@ def translateType (ty : HighTypeMd) : TranslateM LMonoTy := do
     | some (.datatypeDefinition dt) => return .tcons dt.name.text []
     | some (.datatypeConstructor typeName _) => return .tcons typeName.text []
     | _ => do -- resolution should have already emitted a diagnostic
-      modify fun s => { s with coreProgramHasSuperfluousErrors := true }
+      modify fun s => { s with coreDiagnostics := s.coreDiagnostics ++
+        [diagnosticFromSource ty.source s!"UserDefined type could not be resolved to a composite or datatype" DiagnosticType.StrataBug] }
       return .tcons "Composite" []
   | .TCore s => return .tcons s []
   | .TReal => return LMonoTy.real
-  | .Unknown => invalidCoreType
+  | .MultiValuedExpr _ => invalidCoreType ty.source "MultiValuedExpr type encountered during Core translation"
+  | .Unknown => invalidCoreType ty.source "Unknown type encountered during Core translation"
   | _ => do
-    emitDiagnostic (diagnosticFromSource ty.source "cannot translate type to Core: not supported yet" DiagnosticType.StrataBug)
-    invalidCoreType
+    invalidCoreType ty.source s!"cannot translate type to Core: not supported yet"
 
 termination_by ty.val
 decreasing_by all_goals (first | (cases elementType; term_by_mem) | (cases keyType; term_by_mem) | (cases valueType; term_by_mem))
@@ -150,8 +155,9 @@ private def freshId : TranslateM Nat := do
 /-- Throw a hard diagnostic error, aborting the current translation -/
 def throwExprDiagnostic (d : DiagnosticModel): TranslateM Core.Expression.Expr := do
   emitDiagnostic d
-  modify fun s => { s with coreProgramHasSuperfluousErrors := true }
-  return default
+  modify fun s => { s with coreDiagnostics := s.coreDiagnostics ++ [d] }
+  let id ← freshId
+  return LExpr.fvar () (⟨s!"DUMMY_VAR_{id}", ()⟩) none
 
 /--
 Translate Laurel StmtExpr to Core Expression using the `TranslateM` monad.
@@ -316,7 +322,7 @@ def translateExpr (expr : StmtExprMd)
       -- If we see one here, it's an error in the pipeline
       throwExprDiagnostic $ diagnosticFromSource expr.source s!"FieldSelect should have been eliminated by heap parameterization: {Std.ToFormat.format target}#{fieldId.text}" DiagnosticType.StrataBug
   | .Block _ _ =>
-      throwExprDiagnostic $ diagnosticFromSource expr.source s!"block expression should have been lowered in a separate pass, expr: {repr expr}" DiagnosticType.StrataBug
+      throwExprDiagnostic $ diagnosticFromSource expr.source "block expression should have been lowered in a separate pass" DiagnosticType.StrataBug
   | .Return _ => disallowed expr.source "return expression should be lowered in a separate pass"
 
   | .AsType target _ => throwExprDiagnostic $ diagnosticFromSource expr.source "AsType expression translation" DiagnosticType.NotYetImplemented
@@ -361,14 +367,15 @@ private def exprAsUnusedInit (expr : StmtExprMd) (md : Imperative.MetaData Core.
     : TranslateM (List Core.Statement) := do
   let coreExpr ← translateExpr expr
   let id ← freshId
+  let model := (← get).model
   let ident : Core.CoreIdent := ⟨s!"$unused_{id}", ()⟩
-  let tyVarName := s!"$__ty_unused_{id}"
-  let coreType := LTy.forAll [tyVarName] (.ftvar tyVarName)
+  let ty ← translateType (computeExprType model expr)
+  let coreType := LTy.forAll [] ty
   return [Core.Statement.init ident coreType (.det coreExpr) md]
 
 def throwStmtDiagnostic (d : DiagnosticModel): TranslateM (List Core.Statement) := do
   emitDiagnostic d
-  modify fun s => { s with coreProgramHasSuperfluousErrors := true }
+  modify fun s => { s with coreDiagnostics := s.coreDiagnostics ++ [d] }
   return []
 
 /--
@@ -407,8 +414,24 @@ def translateStmt (stmt : StmtExprMd)
       if hasField then
         throwStmtDiagnostic $ md.toDiagnostic "Field targets in assignment should have been lowered by heap parameterization" DiagnosticType.StrataBug
       else
-      -- Partition targets into init statements for Declare targets and CoreIdent list for all targets.
-      -- Declare targets get `init nondet`; Local targets just contribute their identifier.
+      -- Dispatch over targets, calling onDeclare/onLocal per target type.
+      let dispatchTargets
+          (onDeclare : Core.CoreIdent → LTy → TranslateM (List Core.Statement))
+          (onLocal : Core.CoreIdent → TranslateM (List Core.Statement))
+          : TranslateM (List Core.Statement) := do
+        let mut result : List Core.Statement := []
+        for target in targets do
+          match target.val with
+          | .Declare param =>
+            let coreType := LTy.forAll [] (← translateType param.type)
+            let ident : Core.CoreIdent := ⟨param.name.text, ()⟩
+            result := result ++ (← onDeclare ident coreType)
+          | .Local name =>
+            let ident : Core.CoreIdent := ⟨name.text, ()⟩
+            result := result ++ (← onLocal ident)
+          | .Field _ _ => pure () -- already handled above
+        return result
+      -- Partition targets into init-nondet statements and CoreIdent list (for procedure calls).
       let initTargetsNondet : TranslateM (List Core.Statement × List Core.CoreIdent) := do
         let mut inits : List Core.Statement := []
         let mut lhs : List Core.CoreIdent := []
@@ -436,18 +459,11 @@ def translateStmt (stmt : StmtExprMd)
         if model.isFunction callee then
           -- Function call: translate as a normal expression assignment
           let coreExpr ← translateExpr value
-          let mut result : List Core.Statement := []
           match targets with
-          | [target] =>
-            match target.val with
-              | .Declare param =>
-                let coreType := LTy.forAll [] (← translateType param.type)
-                let ident : Core.CoreIdent := ⟨param.name.text, ()⟩
-                result := result ++ [Core.Statement.init ident coreType (.det coreExpr) md]
-              | .Local name =>
-                let ident : Core.CoreIdent := ⟨name.text, ()⟩
-                result := result ++ [Core.Statement.set ident coreExpr md]
-              | .Field _ _ => pure () -- already handled above
+          | [_target] =>
+            let result ← dispatchTargets
+              (onDeclare := fun ident coreType => pure [Core.Statement.init ident coreType (.det coreExpr) md])
+              (onLocal := fun ident => pure [Core.Statement.set ident coreExpr md])
             return result
           | _ =>
             throwStmtDiagnostic $ md.toDiagnostic "function call without a single target" DiagnosticType.StrataBug
@@ -457,31 +473,16 @@ def translateStmt (stmt : StmtExprMd)
           translateCallTargets callee.text args
       | .Hole _ _ =>
           -- Hole RHS: havoc all targets (unmodeled call side-effect).
-          let mut result : List Core.Statement := []
-          for target in targets do
-            match target.val with
-            | .Declare param =>
-              let coreType := LTy.forAll [] (← translateType param.type)
-              let ident : Core.CoreIdent := ⟨param.name.text, ()⟩
-              result := result ++ [Core.Statement.init ident coreType .nondet md]
-            | .Local name =>
-              let ident : Core.CoreIdent := ⟨name.text, ()⟩
-              result := result ++ [Core.Statement.havoc ident md]
-            | .Field _ _ => pure () -- already handled above
-          return result
+          dispatchTargets
+            (onDeclare := fun ident coreType => pure [Core.Statement.init ident coreType .nondet md])
+            (onLocal := fun ident => pure [Core.Statement.havoc ident md])
       | _ =>
         match targets with
-        | [target] =>
+        | [_target] =>
           let coreExpr ← translateExpr value
-          match target.val with
-            | .Declare param =>
-              let coreType := LTy.forAll [] (← translateType param.type)
-              let ident : Core.CoreIdent := ⟨param.name.text, ()⟩
-              return [Core.Statement.init ident coreType (.det coreExpr) md]
-            | .Local name =>
-              let ident : Core.CoreIdent := ⟨name.text, ()⟩
-              return [Core.Statement.set ident coreExpr md]
-            | .Field _ _ => pure [] -- already handled above
+          dispatchTargets
+            (onDeclare := fun ident coreType => pure [Core.Statement.init ident coreType (.det coreExpr) md])
+            (onLocal := fun ident => pure [Core.Statement.set ident coreExpr md])
         | _ =>
           throwStmtDiagnostic $ md.toDiagnostic "Multi-target assignment need a call as a RHS" DiagnosticType.StrataBug
   | .IfThenElse cond thenBranch elseBranch =>
@@ -522,8 +523,9 @@ def translateStmt (stmt : StmtExprMd)
       | none =>
           return [.exit (some "$body") md]
       | some _ =>
-          emitDiagnostic $ md.toDiagnostic "Return statement with value should have been eliminated by EliminateValueReturns pass" DiagnosticType.StrataBug
-          modify fun s => { s with coreProgramHasSuperfluousErrors := true }
+          let d := md.toDiagnostic "Return statement with value should have been eliminated by EliminateValueReturns pass" DiagnosticType.StrataBug
+          emitDiagnostic d
+          modify fun s => { s with coreDiagnostics := s.coreDiagnostics ++ [d] }
           return [.exit (some "$body") md]
   | .While cond invariants decreasesExpr body =>
       let condExpr ← translateExpr cond
