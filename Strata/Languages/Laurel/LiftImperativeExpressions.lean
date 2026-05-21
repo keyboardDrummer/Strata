@@ -10,6 +10,7 @@ public import Strata.Languages.Laurel.Grammar.AbstractToConcreteTreeTranslator
 public import Strata.Languages.Laurel.LaurelTypes
 public import Strata.Languages.Core.Verifier
 public import Strata.DL.Util.Map
+public import Strata.Languages.Laurel.MapStmtExpr
 import Strata.Util.Tactics
 
 namespace Strata
@@ -237,19 +238,21 @@ private def liftAssignExpr (targets : List VariableMd) (seqValue : StmtExprMd)
         setSubst varName snapshotName
     | _ => pure ()
 
-mutual
 /--
 Process an expression in expression context, traversing arguments right to left.
 Assignments are lifted to prependedStmts and replaced with snapshot variable references.
+
+Only constructors that require custom lifting logic are handled explicitly.
+All other constructors (like `PrimitiveOp`) are traversed generically via
+`mapStmtExprChildrenM`, so the pass doesn't need to enumerate language features
+it doesn't relate to.
 -/
-def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
+partial def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
   match expr with
   | AstNode.mk val source =>
   match val with
   | .Var (.Local name) =>
       return ⟨.Var (.Local (← getSubst name)), source⟩
-
-  | .LiteralInt _ | .LiteralBool _ | .LiteralString _ | .LiteralDecimal _ => return expr
 
   | .Hole false (some holeType) =>
       -- Nondeterministic typed hole: lift to a fresh variable with no initializer (havoc)
@@ -282,11 +285,6 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       liftAssignExpr targets value source
 
       return resultExpr
-
-  | .PrimitiveOp op args =>
-      -- Process arguments right to left
-      let seqArgs ← args.reverse.mapM transformExpr
-      return ⟨.PrimitiveOp op seqArgs.reverse, source⟩
 
   | .StaticCall callee args =>
     let model := (← get).model
@@ -353,13 +351,8 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
         prepend (bare (.Var (.Declare ⟨condVar, condType⟩)))
         return bare (.Var (.Local condVar))
       else
-        -- No assignments in branches — recurse normally
-        let seqCond ← transformExpr cond
-        let seqThen ← transformExpr thenBranch
-        let seqElse ← match elseBranch with
-          | some e => pure (some (← transformExpr e))
-          | none => pure none
-        return ⟨.IfThenElse seqCond seqThen seqElse, source⟩
+        -- No assignments in branches — use generic traversal
+        mapStmtExprChildrenM transformExpr (reverseChildren := true) expr
 
   | .Block stmts labelOption =>
       let newStmts := (← stmts.reverse.mapM transformExpr).reverse
@@ -399,10 +392,17 @@ def transformExpr (expr : StmtExprMd) : LiftM StmtExprMd := do
       else
         return expr
 
-  | _ => return expr
-  termination_by (sizeOf expr, 0)
-  decreasing_by
-    all_goals (simp_all; try term_by_mem)
+  -- Assert and Assume in expression position (e.g. inside blocks) are not
+  -- recursed into — they are lifted out by onlyKeepSideEffectStmtsAndLast
+  -- and should reference original variable names, not substituted ones.
+  | .Assert _ | .Assume _ => return expr
+
+  -- All other constructors: delegate to generic right-to-left child traversal
+  -- via `mapStmtExprChildrenM`. This handles PrimitiveOp, ReferenceEquals,
+  -- AsType, IsType, InstanceCall, Quantifier, Assigned, Old, Fresh,
+  -- ProveBy, ContractOf, PureFieldUpdate, Var (.Field ..), and all
+  -- leaves automatically — the pass doesn't need to know about them.
+  | _ => mapStmtExprChildrenM transformExpr (reverseChildren := true) expr
 
 /--
 Process a statement, handling any assignments in its sub-expressions.
@@ -507,11 +507,6 @@ def transformStmt (stmt : StmtExprMd) : LiftM (List StmtExprMd) := do
 
   | _ =>
       return [stmt]
-  termination_by (sizeOf stmt, 0)
-  decreasing_by
-    all_goals (try term_by_mem)
-    all_goals (apply Prod.Lex.left; try term_by_mem)
-end
 
 def transformProcedureBody (body : StmtExprMd) : LiftM StmtExprMd := do
   let stmts ← transformStmt body
