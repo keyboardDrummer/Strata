@@ -149,6 +149,42 @@ procedure addProcCaller(): int
   // var z: int := addProc({x := 1; x}, {x := x + 10; x}) + (x := 3);
   // assert z == 15
 };
+
+// Test: dangling if in expression position (needsCondVar == false when type is void)
+procedure danglingIfInExpression(b: bool)
+  opaque
+{
+  var x: int := 0;
+  if b then { x := 1 };
+  assert (if b then { x == 1 } else { x == 0 })
+};
+
+// Test: assert/assume in expression position (lifted by the pass)
+procedure assertInExpressionPosition()
+  opaque
+{
+  var x: int := 0;
+  x := 1;
+  var y: int := { assert x == 1; x + 1 };
+  assert y == 2
+};
+
+procedure assumeInExpressionPosition()
+  opaque
+{
+  var x: int := 0;
+  x := 1;
+  var y: int := { assume x == 1; x + 1 };
+  assert y == 2
+};
+
+// Test: assignment to a fresh variable in expression position (line 287 feature)
+procedure freshVarAssignInExpression()
+  opaque
+{
+  var r: int := { var z: int := 42; z };
+  assert r == 42
+};
 "
 
 #guard_msgs (error, drop all) in
