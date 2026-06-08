@@ -124,7 +124,7 @@ private def transformProcBody (proc : Procedure) (info : ContractInfo) : Body :=
   | .Transparent body =>
     .Transparent ⟨.Block (preAssumes ++ [body] ++ postAsserts) none, body.source⟩
   | .Opaque _ (some impl) _ =>
-    .Opaque [] (some ⟨.Block (preAssumes ++ [impl] ++ postAsserts) none, impl.source⟩) []
+    .Opaque postconds (some ⟨.Block (preAssumes ++ [impl]) none, impl.source⟩) []
   | .Opaque _ none mods =>
     .Opaque postconds none mods
   | .Abstract postconds =>
