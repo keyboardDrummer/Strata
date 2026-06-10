@@ -137,9 +137,6 @@ private def laurelPipeline : Array LaurelPass := #[
   { name := "DesugarShortCircuit"
     run := fun p _ =>
       (desugarShortCircuit p, [], {}) },
-  -- { name := "LiftExpressionAssignments"
-  --   run := fun p m =>
-  --     (liftExpressionAssignments p m [], [], {}) },
   { name := "ConstrainedTypeElim"
     needsResolves := true
     run := fun p m =>
@@ -246,11 +243,6 @@ structure CorePass where
 
 /-- The ordered sequence of passes on the unordered Core representation. -/
 private def corePipeline : Array CorePass := #[
-  -- { name := "EliminateMultipleOutputs"
-  --   run := fun uc _m => eliminateMultipleOutputs uc },
-  -- { name := "InlineLocalVariablesInExpressions"
-  --   needsResolves := true
-  --   run := fun uc _m => inlineLocalVariablesInExpressions uc },
   { name := "LiftImperativeExpressionsInCore"
     needsResolves := true
     run := fun uc m => liftImperativeExpressionsInCore uc m }
