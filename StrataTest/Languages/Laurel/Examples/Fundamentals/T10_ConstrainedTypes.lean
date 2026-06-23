@@ -3,19 +3,15 @@
 
   SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
-module
 
-meta import all StrataTest.Util.TestDiagnostics
-meta import all StrataTest.Languages.Laurel.TestExamples
-
-meta section
+import StrataTest.Util.TestLaurel
 
 open StrataTest.Util
+open Strata
 
-namespace Strata
-namespace Laurel
-
-def program := r"
+#eval testLaurel <|
+#strata
+program Laurel;
 constrained nat = x: int where x >= 0 witness 0
 constrained posnat = x: nat where x != 0 witness 1
 
@@ -35,7 +31,7 @@ procedure outputValid(): nat
 
 // Output constraint — invalid return fails
 procedure outputInvalid(): nat
-//                         ^^^ error: assertion does not hold
+//                         ^^^ error: postcondition does not hold
   opaque
 {
   return -1
@@ -142,6 +138,17 @@ procedure uninitNat()
   assert y >= 0
 };
 
+procedure sideEffect()
+  opaque
+{
+  var x : nat;
+  var y : int;
+  y := (x := -1) + 1;
+//      ^^^^^^^ error: assertion does not hold
+  assert x==-1;
+  assert y==0
+};
+
 // Uninitialized nested constrained variable — havoc + assume constraint
 procedure uninitPosnat()
   opaque
@@ -162,9 +169,7 @@ procedure uninitNotWitness()
 
 // Quantifier constraint injection — forall
 // n + 1 > 0 is only provable with n >= 0 injected; false for all int
-procedure forallNat()
-  opaque
-{
+procedure forallNat() opaque {
   var b: bool := forall(n: nat) => n + 1 > 0;
   assert b
 };
@@ -172,9 +177,7 @@ procedure forallNat()
 // Quantifier constraint injection — exists
 // n == -1 is satisfiable for int, but not when n >= 0 is required
 // n == 42 works because 42 >= 0
-procedure existsNat()
-  opaque
-{
+procedure existsNat() opaque {
   var b: bool := exists(n: nat) => n == 42;
   assert b
 };
@@ -197,10 +200,4 @@ procedure captureTest(y: haslarger)
   assert false
 //^^^^^^^^^^^^ error: assertion does not hold
 };
-"
-
-#guard_msgs(drop info, error) in
-#eval testInputWithOffset "ConstrainedTypes" program 14 processLaurelFile
-
-end Laurel
-end Strata
+#end

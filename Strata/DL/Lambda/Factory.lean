@@ -113,7 +113,7 @@ theorem LFunc.type_inputs_nodup {T : LExprParams} [DecidableEq T.IDMeta] (f : LF
   split at h <;> try contradiction
   simp_all
 
-def LFunc.opExpr [Inhabited T.Metadata] (f: LFunc T) : LExpr T.mono :=
+@[expose] def LFunc.opExpr [Inhabited T.Metadata] (f: LFunc T) : LExpr T.mono :=
   let input_tys := f.inputs.values
   let output_tys := Lambda.LMonoTy.destructArrow f.output
   let ty := match input_tys with
@@ -123,6 +123,9 @@ def LFunc.opExpr [Inhabited T.Metadata] (f: LFunc T) : LExpr T.mono :=
 
 def LFunc.inputPolyTypes (f : (LFunc T)) : @LTySignature T.IDMeta :=
   f.inputs.map (fun (id, mty) => (id, .forAll f.typeArgs mty))
+
+def LFunc.inputMonoSignature (f : (LFunc T)) : @LTySignature T.IDMeta :=
+  f.inputs.map (fun (id, mty) => (id, .forAll [] mty))
 
 def LFunc.outputPolyType (f : (LFunc T)) : LTy :=
   .forAll f.typeArgs f.output

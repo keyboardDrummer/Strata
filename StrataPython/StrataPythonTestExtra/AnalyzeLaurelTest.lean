@@ -42,7 +42,7 @@ meta def compilePython
   let ionPath := outDir / s!"{stem}.python.st.ion"
   let spawnArgs : IO.Process.SpawnArgs := {
     cmd := toString pythonCmd
-    args := #["-m", "strata.gen", "py_to_strata",
+    args := #["-m", "strata_python.gen", "py_to_strata",
               "--dialect", dialectFile.toString,
               pyFile.toString, ionPath.toString]
     cwd := none
@@ -370,10 +370,9 @@ Without the attribute, the regex VC would be ❓ unknown. -/
     | .error msg => throw <| IO.userError s!"Pipeline failed: {msg}"
     | .ok vcResults =>
       for r in vcResults do
-        if r.obligation.label.startsWith "servicelib_Storage_" then
-          if !r.isSuccess then
-            throw <| IO.userError
-              s!"Expected all Storage preconditions to pass but got: {r.formatOutcome}"
+        if !r.isSuccess then
+          throw <| IO.userError
+            s!"Expected all Storage preconditions to pass but got: {r.formatOutcome}"
 
 /-! ## Resolution error test after FilterPrelude
 

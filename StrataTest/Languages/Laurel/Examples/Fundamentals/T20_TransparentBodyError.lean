@@ -3,30 +3,28 @@
 
   SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
-module
 
-meta import all StrataTest.Util.TestDiagnostics
-meta import all StrataTest.Languages.Laurel.TestExamples
-
-meta section
+import StrataTest.Util.TestLaurel
 
 open StrataTest.Util
+open Strata
 
-namespace Strata
-namespace Laurel
-
-def transparentBodyProgram := r"
+#eval testLaurel <|
+#strata
+program Laurel;
 procedure transparentBodyMultipleOuts() returns (q: int, r: int)
 {
   assert true;
   q := 3;
-//^^^^^^ error: destructive assignments are not supported in transparent bodies or contracts
   r := 2
+//^^^^^^ error: ending a transparent body with a Assign statement is not supported
 };
 
 procedure transparentBodyNoOuts()
 {
-  assert true
+  assert true;
+  3
+//^ error: ending a transparent body with a LiteralInt statement is not supported
 };
 
 procedure transparentProcedureCaller() opaque {
@@ -36,9 +34,4 @@ procedure transparentProcedureCaller() opaque {
 
   transparentBodyNoOuts()
 };
-"
-
-#guard_msgs(drop info, error) in
-#eval testInputWithOffset "TransparentBody" transparentBodyProgram 14 processLaurelFile
-
-end Laurel
+#end

@@ -3,19 +3,15 @@
 
   SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
-module
 
-meta import all StrataTest.Util.TestDiagnostics
-meta import all StrataTest.Languages.Laurel.TestExamples
-
-meta section
+import StrataTest.Util.TestLaurel
 
 open StrataTest.Util
+open Strata
 
-namespace Strata
-namespace Laurel
-
-def program := r#"
+#eval testLaurelKeepIntermediates
+#strata
+program Laurel;
 composite Container {
   var intValue: int // var indicates mutable field
   var realValue: real
@@ -70,9 +66,7 @@ procedure updatesAndAliasing()
   assert dAlias#intValue == d#intValue
 };
 
-procedure subsequentHeapMutations()
-  opaque
-{
+procedure subsequentHeapMutations() opaque {
   var c: Container := new Container;
 
   // The additional parenthesis on the next line are needed to let the parser succeed. Joe, any idea why this is needed?
@@ -128,9 +122,7 @@ composite Pixel {
   var color: Color
 }
 
-procedure datatypeField()
-  opaque
-{
+procedure datatypeField() opaque {
   var p: Pixel := new Pixel;
   p#color := Red();
   assert Color..isRed(p#color);
@@ -201,7 +193,4 @@ procedure fieldTargetInMultiAssign()
   assert y == 2;
   assert z == 3
 };
-"#
-
-#guard_msgs (drop info, error) in
-#eval testInputWithOffset "MutableFields" program 14 processLaurelFile
+#end

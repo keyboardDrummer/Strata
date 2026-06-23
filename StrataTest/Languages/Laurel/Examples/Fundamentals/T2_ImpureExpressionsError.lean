@@ -3,19 +3,21 @@
 
   SPDX-License-Identifier: Apache-2.0 OR MIT
 -/
-module
 
-meta import all StrataTest.Util.TestDiagnostics
-meta import all StrataTest.Languages.Laurel.TestExamples
-
-meta section
+import StrataTest.Util.TestLaurel
 
 open StrataTest.Util
 open Strata
 
-namespace Strata.Laurel
+/-! ## Procedures used by the negative tests below -/
 
-def program: String := r"
+-- Resolution-only errors are reported via the resolution pass; we use the full
+-- pipeline helper because the expected diagnostics are not pure resolution
+-- errors.
+
+#eval testLaurel <|
+#strata
+program Laurel;
 procedure hasMutatingAssignment(): int
   opaque
 {
@@ -32,18 +34,17 @@ function functionWithMutatingAssignment(x: int): int
 
 function functionWithWhile(x: int): int
 {
-  while(false) {}
+  while(false) {};
 //^^^^^^^^^^^^^^^ error: loops are not supported in functions or contracts
+  3
 };
 function functionCallingHasMutationAssignment(x: int): int
 {
   hasMutatingAssignment()
-//^^^^^^^^^^^^^^^^^^^^^^^ error: calls to procedures are not supported in functions or contracts
 };
 
-procedure impureContractIsNotLegal1(x: int)
+procedure impureContractIsLegal1(x: int)
   requires x == hasMutatingAssignment()
-//              ^^^^^^^^^^^^^^^^^^^^^^^ error: calls to procedures are not supported in functions or contracts
   opaque
 {
   assert hasMutatingAssignment() == 1
@@ -55,12 +56,5 @@ procedure impureContractIsNotLegal2(x: int)
   opaque
 {
   assert (x := 2) == 2
-//        ^^^^^^ error: destructive assignments are not supported in transparent bodies or contracts
 };
-"
-
-#guard_msgs (error, drop all) in
-#eval! testInputWithOffset "NestedImpureStatements" program 14 processLaurelFile
-
-
-end Laurel
+#end
