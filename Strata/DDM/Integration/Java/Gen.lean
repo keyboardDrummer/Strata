@@ -35,7 +35,7 @@ structure types at compile time and generates Java source code consisting of:
 
 ## Container types
 
-`List α` → `java.util.List<T>`, `Option α` → nullable `T`
+`List α` → `java.util.List<T>`, `Option α` → `java.util.Optional<T>`
 -/
 
 namespace Strata.Java
@@ -242,7 +242,7 @@ private meta def javaTypeForInfo : FieldTypeInfo → String
   | .leaf name => (leafJavaType name).getD "java.lang.Object"
   | .compound name => escapeJavaName (toPascalCase (name.getString!))
   | .list elem => s!"java.util.List<{javaBoxedTypeForInfo elem}>"
-  | .option elem => javaBoxedTypeForInfo elem
+  | .option elem => s!"java.util.Optional<{javaBoxedTypeForInfo elem}>"
 where
   javaBoxedTypeForInfo : FieldTypeInfo → String
     | .leaf ``Nat | .leaf ``Int => "Long"
@@ -263,8 +263,8 @@ private meta partial def serializeExprForInfo (ti : FieldTypeInfo) (accessor : S
     -- This branch is used for inner elements of containers (e.g., Option (List T)).
     s!"{accessor}.toIon(ion)"
   | .option elem =>
-    let inner := serializeExprForInfo elem accessor
-    s!"({accessor} != null ? {inner} : ion.newNull())"
+    let inner := serializeExprForInfo elem s!"{accessor}.get()"
+    s!"({accessor}.isPresent() ? {inner} : ion.newNull())"
 
 private meta def serializeExprFor (f : FieldInfo) (accessor : String) : String :=
   serializeExprForInfo f.typeInfo accessor
